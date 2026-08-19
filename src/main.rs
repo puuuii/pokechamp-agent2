@@ -1,4 +1,3 @@
-// src/main.rs
 use anyhow::Result;
 use crossbeam_channel::{Receiver, bounded};
 use minifb::{Window, WindowOptions};
@@ -70,20 +69,18 @@ impl NokhwaCapture {
             config.fps,
         );
 
-        // キャプチャカードは対応解像度/fpsの組み合わせがピンポイントなことが多く、
-        // Exact固定だと弾かれるケースがあるためClosestへフォールバックする。
+        // 指定したフォーマットがサポートされていない場合、`src\bin\list_devices.rs`を実行するようメッセージを出して終了する
         let requested_exact = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(format));
-
         let mut camera = match Camera::new(CameraIndex::Index(config.camera_index), requested_exact)
         {
             Ok(cam) => cam,
             Err(e) => {
-                eprintln!(
-                    "Exact format request failed ({e}). Falling back to closest available format."
+                anyhow::bail!(
+                    "Failed to open camera index {} with format {:?}: {e}. \
+                     Please run `cargo run --bin list_devices` to check available formats.",
+                    config.camera_index,
+                    format
                 );
-                let requested_closest =
-                    RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(format));
-                Camera::new(CameraIndex::Index(config.camera_index), requested_closest)?
             }
         };
 
@@ -91,15 +88,14 @@ impl NokhwaCapture {
         let actual = camera.camera_format();
         println!("Camera opened. Actual format: {actual:?}");
 
-        // 以降の capture_frame は YUYV 前提で直接デコードするため、
-        // フォールバック等で実際のフォーマットがYUYV以外になっていないか起動時に確認する。
-        // （MJPEG等に化けた場合、ここで気付かずに描画が壊れるのを防ぐ）
+        // 以降の capture_frame は YUYV 前提で直接デコードするため、フォーマットがYUYVでない場合はエラーにする。
         anyhow::ensure!(
             actual.format() == FrameFormat::YUYV,
             "Direct YUYV decode requires FrameFormat::YUYV, but got {:?}. \
              Either force the device into YUYV or restore decode_image::<RgbFormat>().",
             actual.format()
         );
+        // YUYVは2バイトで1ピクセルペアを表すため、幅が奇数だと最後のピクセルが欠落する。
         anyhow::ensure!(
             actual.resolution().width() % 2 == 0,
             "YUYV requires an even width (2 bytes = 1 pixel pair), got {}",
@@ -130,15 +126,13 @@ fn yuv_to_packed_u32(y: i32, u: i32, v: i32) -> u32 {
 impl VideoSource for NokhwaCapture {
     fn capture_frame(&mut self) -> Result<FrameBuffer> {
         let frame = self.camera.frame()?;
-        // decode_image::<RgbFormat>() を経由せず、YUYVの生バイト列を直接u32へ変換する。
-        // (YUYV→RGB→u32 の2パスを、YUYV→u32 の1パスにまとめてメモリトラフィックを半減させる)
         let yuyv = frame.buffer();
 
         let width = self.width;
         let height = self.height;
         let pixel_count = width * height;
 
-        // ゼロ初期化をスキップ（お手軽版）: 以下のループで全要素を必ず1回ずつ書き込むため、
+        // 以下のループで全要素を必ず1回ずつ書き込むため、
         // vec![0u32; n] のゼロクリアコストを払う必要がない。
         let mut out_buf: Vec<u32> = Vec::with_capacity(pixel_count);
         // SAFETY: 直後の par_chunks_exact_mut(width) が幅方向・高さ方向を漏れなく走査し、
@@ -161,7 +155,6 @@ impl VideoSource for NokhwaCapture {
                 }
             });
 
-        let _ = height; // heightはchunks_exactの境界チェック用途で暗黙的に使用済み
         Ok(Arc::new(out_buf))
     }
 }
@@ -185,15 +178,13 @@ impl CaptureService {
     /// 戻り値: (表示用Receiver, ML推論用Receiver)
     /// FrameBufferはArc<Vec<u32>>なのでcloneしても中身のコピーは発生しない。
     pub fn spawn_loop(self) -> Result<(Receiver<FrameBuffer>, Receiver<FrameBuffer>)> {
-        let (tx_display, rx_display) = bounded::<FrameBuffer>(2);
+        let (tx_display, rx_display) = bounded::<FrameBuffer>(1);
         let (tx_ml, rx_ml) = bounded::<FrameBuffer>(1);
 
         // キャプチャスレッド内でバックプレッシャー時に古いフレームを捨てるために
         // Receiver側の複製ハンドルを持っておく（crossbeamのReceiverはMPMCなのでOK）
         let rx_display_for_capture = rx_display.clone();
         let rx_ml_for_capture = rx_ml.clone();
-
-        let ml_sample_interval = self.ml_sample_interval;
 
         thread::spawn(move || {
             let mut source = match NokhwaCapture::new(&self.config) {
@@ -228,7 +219,7 @@ impl CaptureService {
 
                 // --- ML系統: 間引いてサンプリングし、推論が重くても表示側に影響させない ---
                 ml_tick += 1;
-                if ml_tick >= ml_sample_interval {
+                if ml_tick >= self.ml_sample_interval {
                     ml_tick = 0;
                     if let Err(crossbeam_channel::TrySendError::Full(latest)) = tx_ml.try_send(buf)
                     {
