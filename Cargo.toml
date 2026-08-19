@@ -1,0 +1,13 @@
+[package]
+name = "pokechamp-agent2"
+version = "0.1.0"
+edition = "2024"
+default-run = "pokechamp-agent2"
+
+[dependencies]
+nokhwa = { version = "0.10", features = ["input-native"] }
+minifb = "0.27"
+anyhow = "1"
+crossbeam-channel = "0.5"
+cpal = "0.15"
+ringbuf = "0.4"
