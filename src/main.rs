@@ -1,6 +1,6 @@
 // src/main.rs
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, bounded};
 use minifb::{Window, WindowOptions};
 use nokhwa::{
     Camera,
@@ -10,6 +10,7 @@ use nokhwa::{
     },
 };
 use rayon::prelude::*;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,12 +18,13 @@ use std::time::{Duration, Instant};
 // 1. Core / Traits
 // ==========================================
 
-/// ピクセルデータ（0x00RRGGBB）を格納するフレームバッファ型
-pub type FrameBuffer = Vec<u32>;
+/// ピクセルデータ（0x00RRGGBB）を格納するフレームバッファ型。
+/// Arcで包むことでdisplay系統とML推論系統の両方へ実体コピーなしでfan-outできる。
+pub type FrameBuffer = Arc<Vec<u32>>;
 
 /// 映像キャプチャデバイスのインターフェース
 pub trait VideoSource {
-    fn capture_frame(&mut self, out_buf: &mut FrameBuffer) -> Result<()>;
+    fn capture_frame(&mut self) -> Result<FrameBuffer>;
 }
 
 /// 音声パススルーデバイスのインターフェース
@@ -56,67 +58,144 @@ impl Default for VideoConfig {
 
 pub struct NokhwaCapture {
     camera: Camera,
+    width: usize,
+    height: usize,
 }
 
 impl NokhwaCapture {
     pub fn new(config: &VideoConfig) -> Result<Self> {
-        let index = CameraIndex::Index(config.camera_index);
         let format = CameraFormat::new(
             Resolution::new(config.width, config.height),
             config.frame_format,
             config.fps,
         );
-        let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(format));
 
-        let mut camera = Camera::new(index, requested)?;
+        // キャプチャカードは対応解像度/fpsの組み合わせがピンポイントなことが多く、
+        // Exact固定だと弾かれるケースがあるためClosestへフォールバックする。
+        let requested_exact = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(format));
+
+        let mut camera = match Camera::new(CameraIndex::Index(config.camera_index), requested_exact)
+        {
+            Ok(cam) => cam,
+            Err(e) => {
+                eprintln!(
+                    "Exact format request failed ({e}). Falling back to closest available format."
+                );
+                let requested_closest =
+                    RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(format));
+                Camera::new(CameraIndex::Index(config.camera_index), requested_closest)?
+            }
+        };
+
         camera.open_stream()?;
-        println!("Camera opened. Actual format: {:?}", camera.camera_format());
+        let actual = camera.camera_format();
+        println!("Camera opened. Actual format: {actual:?}");
 
-        Ok(Self { camera })
+        // 以降の capture_frame は YUYV 前提で直接デコードするため、
+        // フォールバック等で実際のフォーマットがYUYV以外になっていないか起動時に確認する。
+        // （MJPEG等に化けた場合、ここで気付かずに描画が壊れるのを防ぐ）
+        anyhow::ensure!(
+            actual.format() == FrameFormat::YUYV,
+            "Direct YUYV decode requires FrameFormat::YUYV, but got {:?}. \
+             Either force the device into YUYV or restore decode_image::<RgbFormat>().",
+            actual.format()
+        );
+        anyhow::ensure!(
+            actual.resolution().width() % 2 == 0,
+            "YUYV requires an even width (2 bytes = 1 pixel pair), got {}",
+            actual.resolution().width()
+        );
+
+        Ok(Self {
+            camera,
+            width: actual.resolution().width() as usize,
+            height: actual.resolution().height() as usize,
+        })
     }
+}
+
+/// BT.601相当のYUV→RGB変換（各成分0-255にクランプ）
+#[inline(always)]
+fn yuv_to_packed_u32(y: i32, u: i32, v: i32) -> u32 {
+    let c = y - 16;
+    let r = (298 * c + 409 * v + 128) >> 8;
+    let g = (298 * c - 100 * u - 208 * v + 128) >> 8;
+    let b = (298 * c + 516 * u + 128) >> 8;
+    let r = r.clamp(0, 255) as u32;
+    let g = g.clamp(0, 255) as u32;
+    let b = b.clamp(0, 255) as u32;
+    (r << 16) | (g << 8) | b
 }
 
 impl VideoSource for NokhwaCapture {
-    fn capture_frame(&mut self, out_buf: &mut FrameBuffer) -> Result<()> {
+    fn capture_frame(&mut self) -> Result<FrameBuffer> {
         let frame = self.camera.frame()?;
-        let decoded = frame.decode_image::<RgbFormat>()?;
-        let raw = decoded.as_raw();
+        // decode_image::<RgbFormat>() を経由せず、YUYVの生バイト列を直接u32へ変換する。
+        // (YUYV→RGB→u32 の2パスを、YUYV→u32 の1パスにまとめてメモリトラフィックを半減させる)
+        let yuyv = frame.buffer();
 
-        // 確保済みバッファに書き込み（再利用）
-        out_buf.resize((decoded.width() * decoded.height()) as usize, 0);
+        let width = self.width;
+        let height = self.height;
+        let pixel_count = width * height;
+
+        // ゼロ初期化をスキップ（お手軽版）: 以下のループで全要素を必ず1回ずつ書き込むため、
+        // vec![0u32; n] のゼロクリアコストを払う必要がない。
+        let mut out_buf: Vec<u32> = Vec::with_capacity(pixel_count);
+        // SAFETY: 直後の par_chunks_exact_mut(width) が幅方向・高さ方向を漏れなく走査し、
+        // 各要素をちょうど1回書き込んでから関数を返す。書き込み前に読み出す経路は存在しない。
+        unsafe {
+            out_buf.set_len(pixel_count);
+        }
+
         out_buf
-            .par_chunks_exact_mut(1)
-            .zip(raw.par_chunks_exact(3))
-            .for_each(|(out, px)| {
-                out[0] = ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32);
+            .par_chunks_exact_mut(width)
+            .zip(yuyv.par_chunks_exact(width * 2))
+            .for_each(|(out_row, in_row)| {
+                for (out_pair, in_quad) in out_row.chunks_exact_mut(2).zip(in_row.chunks_exact(4)) {
+                    let y0 = in_quad[0] as i32;
+                    let u = in_quad[1] as i32 - 128;
+                    let y1 = in_quad[2] as i32;
+                    let v = in_quad[3] as i32 - 128;
+                    out_pair[0] = yuv_to_packed_u32(y0, u, v);
+                    out_pair[1] = yuv_to_packed_u32(y1, u, v);
+                }
             });
 
-        Ok(())
+        let _ = height; // heightはchunks_exactの境界チェック用途で暗黙的に使用済み
+        Ok(Arc::new(out_buf))
     }
 }
 
-/// キャプチャループを実行・非同期管理するサービス
+/// キャプチャループを実行・非同期管理するサービス。
+/// 1本のキャプチャから display 用と ML 推論用の2系統にフレームを配る。
 pub struct CaptureService {
     config: VideoConfig,
+    /// 何フレームに1回MLチャネルへ回すか（例: 30なら60fps環境で約2fps相当）
+    ml_sample_interval: u32,
 }
 
 impl CaptureService {
-    pub fn new(config: VideoConfig) -> Self {
-        Self { config }
+    pub fn new(config: VideoConfig, ml_sample_interval: u32) -> Self {
+        Self {
+            config,
+            ml_sample_interval: ml_sample_interval.max(1),
+        }
     }
 
-    pub fn spawn_loop(self) -> Result<(Receiver<FrameBuffer>, Sender<FrameBuffer>)> {
-        let (tx_frame, rx_frame) = bounded::<FrameBuffer>(2);
-        let (tx_pool, rx_pool) = bounded::<FrameBuffer>(3);
+    /// 戻り値: (表示用Receiver, ML推論用Receiver)
+    /// FrameBufferはArc<Vec<u32>>なのでcloneしても中身のコピーは発生しない。
+    pub fn spawn_loop(self) -> Result<(Receiver<FrameBuffer>, Receiver<FrameBuffer>)> {
+        let (tx_display, rx_display) = bounded::<FrameBuffer>(2);
+        let (tx_ml, rx_ml) = bounded::<FrameBuffer>(1);
 
-        let buf_size = (self.config.width * self.config.height) as usize;
-        for _ in 0..3 {
-            let _ = tx_pool.send(vec![0u32; buf_size]);
-        }
+        // キャプチャスレッド内でバックプレッシャー時に古いフレームを捨てるために
+        // Receiver側の複製ハンドルを持っておく（crossbeamのReceiverはMPMCなのでOK）
+        let rx_display_for_capture = rx_display.clone();
+        let rx_ml_for_capture = rx_ml.clone();
 
-        // スレッド起動 (Cameraの生成・所有権管理はスレッド内部で行う)
+        let ml_sample_interval = self.ml_sample_interval;
+
         thread::spawn(move || {
-            // スレッド内部で NokhwaCapture を初期化 (Send境界を回避)
             let mut source = match NokhwaCapture::new(&self.config) {
                 Ok(s) => s,
                 Err(e) => {
@@ -126,22 +205,36 @@ impl CaptureService {
             };
 
             let mut frame_count = 0u32;
+            let mut ml_tick = 0u32;
             let mut last_report = Instant::now();
 
             loop {
-                let mut buf = rx_pool.try_recv().unwrap_or_else(|_| vec![0u32; buf_size]);
+                let buf = match source.capture_frame() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("Capture frame error: {e}");
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                };
 
-                if let Err(e) = source.capture_frame(&mut buf) {
-                    eprintln!("Capture frame error: {e}");
-                    thread::sleep(Duration::from_millis(10));
-                    continue;
+                // --- 表示系統: 詰まっていたら最古のフレームを捨てて最新を優先 ---
+                if let Err(crossbeam_channel::TrySendError::Full(latest)) =
+                    tx_display.try_send(Arc::clone(&buf))
+                {
+                    let _ = rx_display_for_capture.try_recv();
+                    let _ = tx_display.try_send(latest);
                 }
 
-                if let Err(crossbeam_channel::TrySendError::Full(returned_buf)) =
-                    tx_frame.try_send(buf)
-                {
-                    let _ = rx_pool.try_recv();
-                    drop(returned_buf);
+                // --- ML系統: 間引いてサンプリングし、推論が重くても表示側に影響させない ---
+                ml_tick += 1;
+                if ml_tick >= ml_sample_interval {
+                    ml_tick = 0;
+                    if let Err(crossbeam_channel::TrySendError::Full(latest)) = tx_ml.try_send(buf)
+                    {
+                        let _ = rx_ml_for_capture.try_recv();
+                        let _ = tx_ml.try_send(latest);
+                    }
                 }
 
                 frame_count += 1;
@@ -153,7 +246,7 @@ impl CaptureService {
             }
         });
 
-        Ok((rx_frame, tx_pool))
+        Ok((rx_display, rx_ml))
     }
 }
 
@@ -177,7 +270,7 @@ impl DisplayWindow {
             window,
             width,
             height,
-            current_frame: vec![0u32; width * height],
+            current_frame: Arc::new(vec![0u32; width * height]),
         })
     }
 
@@ -186,17 +279,12 @@ impl DisplayWindow {
     }
 
     /// 受信チャネルから最新フレームを取り出し、画面を更新する
-    pub fn render_latest(
-        &mut self,
-        rx_frame: &Receiver<FrameBuffer>,
-        tx_pool: &Sender<FrameBuffer>,
-    ) -> Result<()> {
+    pub fn render_latest(&mut self, rx_frame: &Receiver<FrameBuffer>) -> Result<()> {
         let mut updated = false;
 
-        // 最新のフレームまでキューを消化
+        // 最新のフレームまでキューを消化（Arcのcloneなので実体コピーはしない）
         while let Ok(frame) = rx_frame.try_recv() {
-            let old_frame = std::mem::replace(&mut self.current_frame, frame);
-            let _ = tx_pool.try_send(old_frame);
+            self.current_frame = frame;
             updated = true;
         }
 
@@ -333,7 +421,44 @@ pub mod audio {
 }
 
 // ==========================================
-// 5. Application Entry Point
+// 5. ML Inference Component（プレースホルダー）
+// ==========================================
+//
+// 現状は未実装。将来ここに `ort` クレート（champions-agentで使ったのと同系統）で
+// ONNXモデルをロードし、rx_mlから受け取ったフレームに対して推論を行う想定。
+// フレームはCaptureService側で間引かれて送られてくるため、
+// ここでの処理がどれだけ重くても表示ループのFPSには影響しない。
+pub mod inference {
+    use super::FrameBuffer;
+    use crossbeam_channel::Receiver;
+    use std::thread;
+
+    pub struct InferenceConfig {
+        pub target_width: u32,
+        pub target_height: u32,
+    }
+
+    pub struct InferenceWorker;
+
+    impl InferenceWorker {
+        /// 別スレッドで推論ループを起動する。
+        /// 今はフレームを受け取って捨てるだけのスタブ。
+        pub fn spawn(rx_ml: Receiver<FrameBuffer>, _config: InferenceConfig) {
+            thread::spawn(move || {
+                for frame in rx_ml.iter() {
+                    // TODO: frame (0xRRGGBB の u32配列) を target_width x target_height に
+                    //       リサイズしてモデル入力テンソルへ変換する
+                    // TODO: ort::Session::run(...) で推論を実行する
+                    // TODO: 推論結果をオーバーレイ描画用の共有状態やチャネルへ反映する
+                    let _ = frame.len(); // 現状は未使用（プレースホルダー）
+                }
+            });
+        }
+    }
+}
+
+// ==========================================
+// 6. Application Entry Point
 // ==========================================
 
 fn main() -> Result<()> {
@@ -341,9 +466,12 @@ fn main() -> Result<()> {
     let width = video_config.width as usize;
     let height = video_config.height as usize;
 
-    // 1. キャプチャサービスのセットアップと起動
-    let capture_service = CaptureService::new(video_config);
-    let (rx_frame, tx_pool) = capture_service.spawn_loop()?;
+    // 60fps想定でNフレームに1回だけMLチャネルへ回す（30 = 約2fps相当）
+    const ML_SAMPLE_INTERVAL: u32 = 30;
+
+    // 1. キャプチャサービスのセットアップと起動（display用・ML用の2系統を受け取る）
+    let capture_service = CaptureService::new(video_config, ML_SAMPLE_INTERVAL);
+    let (rx_display, rx_ml) = capture_service.spawn_loop()?;
 
     // 2. 音声処理の起動
     thread::spawn(|| {
@@ -353,12 +481,21 @@ fn main() -> Result<()> {
         }
     });
 
-    // 3. 表示ウィンドウの初期化
+    // 3. 推論ワーカーの起動（現状はスタブ。将来ここにONNX推論を実装していく）
+    inference::InferenceWorker::spawn(
+        rx_ml,
+        inference::InferenceConfig {
+            target_width: 224,
+            target_height: 224,
+        },
+    );
+
+    // 4. 表示ウィンドウの初期化
     let mut window = DisplayWindow::new("Switch Capture", width, height)?;
 
-    // 4. メインループ（描画＆UIイベント）
+    // 5. メインループ（描画＆UIイベント）
     while window.is_open() {
-        window.render_latest(&rx_frame, &tx_pool)?;
+        window.render_latest(&rx_display)?;
     }
 
     Ok(())
