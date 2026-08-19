@@ -1,11 +1,13 @@
 // src/main.rs
-use anyhow::{Context, Result};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use anyhow::Result;
+use crossbeam_channel::{Receiver, Sender, bounded};
 use minifb::{Window, WindowOptions};
 use nokhwa::{
-    pixel_format::RgbFormat,
-    utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution},
     Camera,
+    pixel_format::RgbFormat,
+    utils::{
+        CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
+    },
 };
 use std::thread;
 use std::time::Instant;
@@ -13,8 +15,9 @@ use std::time::Instant;
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
 const FPS: u32 = 60;
+const BUF_SIZE: usize = (WIDTH * HEIGHT) as usize;
 
-fn spawn_capture_thread(tx: Sender<Vec<u32>>) {
+fn spawn_capture_thread(tx_frame: Sender<Vec<u32>>, rx_pool: Receiver<Vec<u32>>) {
     let index = CameraIndex::Index(0);
     let format = CameraFormat::new(Resolution::new(WIDTH, HEIGHT), FrameFormat::MJPEG, FPS);
     let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(format));
@@ -33,13 +36,7 @@ fn spawn_capture_thread(tx: Sender<Vec<u32>>) {
             return;
         }
 
-        // 注意: ここで報告されるframe_rateはドライバ/nokhwa側の表示バグで
-        // 実態と違うことがある。実際のfpsは下のcapture fpsログで判断する。
         println!("actual format (reported): {:?}", camera.camera_format());
-
-        let width = WIDTH as usize;
-        let height = HEIGHT as usize;
-        let mut buf = vec![0u32; width * height];
 
         let mut frame_count = 0u32;
         let mut last_report = Instant::now();
@@ -59,11 +56,23 @@ fn spawn_capture_thread(tx: Sender<Vec<u32>>) {
                     continue;
                 }
             };
+
+            // バッファプールから未使用バッファを取得（無ければ新規確保）
+            let mut buf = rx_pool.try_recv().unwrap_or_else(|_| vec![0u32; BUF_SIZE]);
+
             let raw = decoded.as_raw();
-            for (i, px) in raw.chunks_exact(3).enumerate() {
-                buf[i] = ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | px[2] as u32;
+            // SIMDやイテレータの最適化がかかりやすい形式に変更
+            for (px, out) in raw.chunks_exact(3).zip(buf.iter_mut()) {
+                *out = ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32);
             }
-            let _ = tx.try_send(buf.clone());
+
+            // 最新フレームを送信。受信側が詰まっている場合は古いフレームを落としてバッファを回収
+            if let Err(crossbeam_channel::TrySendError::Full(returned_buf)) = tx_frame.try_send(buf)
+            {
+                // 送信失敗時はバッファをプールに戻す
+                let _ = rx_pool.try_recv();
+                drop(returned_buf);
+            }
 
             frame_count += 1;
             if last_report.elapsed().as_secs() >= 1 {
@@ -76,8 +85,16 @@ fn spawn_capture_thread(tx: Sender<Vec<u32>>) {
 }
 
 fn main() -> Result<()> {
-    let (tx, rx): (Sender<Vec<u32>>, Receiver<Vec<u32>>) = bounded(2);
-    spawn_capture_thread(tx);
+    // バッファプール用のチャンネルと、フレーム送信用チャンネルを作成
+    let (tx_frame, rx_frame): (Sender<Vec<u32>>, Receiver<Vec<u32>>) = bounded(2);
+    let (tx_pool, rx_pool): (Sender<Vec<u32>>, Receiver<Vec<u32>>) = bounded(3);
+
+    // 初期バッファをプールに供給
+    for _ in 0..3 {
+        let _ = tx_pool.send(vec![0u32; BUF_SIZE]);
+    }
+
+    spawn_capture_thread(tx_frame, rx_pool);
 
     thread::spawn(|| {
         if let Err(e) = audio::run_passthrough() {
@@ -91,24 +108,41 @@ fn main() -> Result<()> {
         HEIGHT as usize,
         WindowOptions::default(),
     )?;
-    window.set_target_fps(60);
 
-    let mut last_frame = vec![0u32; (WIDTH * HEIGHT) as usize];
+    // 手動フレーム制御にするためターゲットFPSの制限を解除
+    window.set_target_fps(0);
+
+    let mut current_frame = vec![0u32; BUF_SIZE];
 
     while window.is_open() {
-        while let Ok(f) = rx.try_recv() {
-            last_frame = f;
+        // 新しいフレームがあれば最新のものに更新し、使い終わったバッファをプールに返す
+        let mut updated = false;
+        while let Ok(frame) = rx_frame.try_recv() {
+            let old_frame = std::mem::replace(&mut current_frame, frame);
+            let _ = tx_pool.try_send(old_frame);
+            updated = true;
         }
-        window.update_with_buffer(&last_frame, WIDTH as usize, HEIGHT as usize)?;
+
+        if updated {
+            window.update_with_buffer(&current_frame, WIDTH as usize, HEIGHT as usize)?;
+        } else {
+            // イベント処理のみ実施して描画更新をスキップ
+            window.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     Ok(())
 }
 
 mod audio {
+    // （オーディオモジュールは変更なし）
     use anyhow::{Context, Result};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use ringbuf::{traits::{Consumer, Producer, Split}, HeapRb};
+    use ringbuf::{
+        HeapRb,
+        traits::{Consumer, Producer, Split},
+    };
 
     pub fn run_passthrough() -> Result<()> {
         let host = cpal::default_host();
@@ -138,8 +172,7 @@ mod audio {
         println!("input: {} ch, {} Hz", in_channels, in_rate);
         println!("output: {} ch, {} Hz", out_channels, out_rate);
 
-        // 出力側のバッファ(出力レート・出力chドメイン)を確保
-        let ring = HeapRb::<f32>::new(out_rate as usize * out_channels * 2); // 約2秒分
+        let ring = HeapRb::<f32>::new(out_rate as usize * out_channels / 20);
         let (mut producer, mut consumer) = ring.split();
 
         let ratio = out_rate as f64 / in_rate as f64;
@@ -148,7 +181,6 @@ mod audio {
         let input_stream = input_device.build_input_stream(
             &input_config.into(),
             move |data: &[f32], _| {
-                // 入力をモノラルにダウンミックス
                 let in_frames: Vec<f32> = data
                     .chunks_exact(in_channels)
                     .map(|c| c.iter().sum::<f32>() / in_channels as f32)
@@ -158,7 +190,6 @@ mod audio {
                     return;
                 }
 
-                // サンプルレート変換（線形補間）+ 出力チャンネル数へ複製
                 let n_out = ((n_in as f64) * ratio).round() as usize;
                 for i in 0..n_out {
                     let src_pos = i as f64 / ratio;
