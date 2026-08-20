@@ -1,6 +1,6 @@
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use minifb::{Window, WindowOptions};
+use minifb::{Key, Window, WindowOptions};
 use nokhwa::{
     Camera,
     pixel_format::RgbFormat,
@@ -9,13 +9,39 @@ use nokhwa::{
     },
 };
 use rayon::prelude::*;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::hardware::{FrameBuffer, VideoSource};
 
 const SINGLE_SLOT_LATEST_FRAME_ONLY: usize = 1;
+
+#[derive(Debug, Clone, Copy)]
+pub struct CropArea {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl CropArea {
+    pub fn default_720p() -> Self {
+        Self {
+            x: 520,
+            y: 90,
+            width: 240,
+            height: 60,
+        }
+    }
+
+    pub fn clamp(&mut self, max_w: usize, max_h: usize) {
+        self.width = self.width.clamp(20, max_w);
+        self.height = self.height.clamp(20, max_h);
+        self.x = self.x.clamp(0, max_w.saturating_sub(self.width));
+        self.y = self.y.clamp(0, max_h.saturating_sub(self.height));
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct VideoConfig {
@@ -64,8 +90,7 @@ impl NokhwaCapture {
         let mut camera = Camera::new(CameraIndex::Index(config.camera_index), requested_format)
             .map_err(|e| {
                 anyhow::anyhow!(
-                    "Failed to open camera index {} with format {:?}: {e}. \
-                     Please run `cargo run --bin list_devices` to check available formats.",
+                    "Failed to open camera index {} with format {:?}: {e}.",
                     config.camera_index,
                     desired_format
                 )
@@ -84,10 +109,7 @@ impl NokhwaCapture {
         let width = actual_format.resolution().width() as usize;
         let height = actual_format.resolution().height() as usize;
 
-        anyhow::ensure!(
-            width % 2 == 0,
-            "YUYV requires an even width (2 bytes = 1 pixel pair), got {width}"
-        );
+        anyhow::ensure!(width % 2 == 0, "YUYV requires an even width, got {width}");
 
         Ok(Self {
             camera,
@@ -254,6 +276,9 @@ pub struct DisplayWindow {
     width: usize,
     height: usize,
     current_frame: FrameBuffer,
+    render_buffer: Vec<u32>,
+    last_input_time: Instant,
+    show_debug_frame: bool,
 }
 
 impl DisplayWindow {
@@ -269,11 +294,81 @@ impl DisplayWindow {
             width,
             height,
             current_frame: Arc::new(vec![0u32; width * height]),
+            render_buffer: vec![0u32; width * height],
+            last_input_time: Instant::now(),
+            // デバッグビルド(cargo run)時のみデフォルトON
+            show_debug_frame: cfg!(debug_assertions),
         })
     }
 
     pub fn is_open(&self) -> bool {
         self.window.is_open()
+    }
+
+    fn handle_input(&mut self, crop_area: &Arc<RwLock<CropArea>>) {
+        // Dキーのトグル判定（押した一瞬だけ検知し、長押し連打を防ぐ）
+        if cfg!(debug_assertions) && self.window.is_key_pressed(Key::D, minifb::KeyRepeat::No) {
+            self.show_debug_frame = !self.show_debug_frame;
+            println!("[Debug Frame] Visibility: {}", self.show_debug_frame);
+            return;
+        }
+
+        // 矢印キーによる連続移動用の入力インターバル（50ms）
+        if self.last_input_time.elapsed() < Duration::from_millis(50) {
+            return;
+        }
+
+        let mut crop = crop_area.write().unwrap();
+        let shift =
+            self.window.is_key_down(Key::LeftShift) || self.window.is_key_down(Key::RightShift);
+        let step = 2;
+
+        let mut changed = false;
+
+        if shift {
+            if self.window.is_key_down(Key::Left) {
+                crop.width = crop.width.saturating_sub(step);
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Right) {
+                crop.width += step;
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Up) {
+                crop.height = crop.height.saturating_sub(step);
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Down) {
+                crop.height += step;
+                changed = true;
+            }
+        } else {
+            if self.window.is_key_down(Key::Left) {
+                crop.x = crop.x.saturating_sub(step);
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Right) {
+                crop.x += step;
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Up) {
+                crop.y = crop.y.saturating_sub(step);
+                changed = true;
+            }
+            if self.window.is_key_down(Key::Down) {
+                crop.y += step;
+                changed = true;
+            }
+        }
+
+        if changed {
+            crop.clamp(self.width, self.height);
+            self.last_input_time = Instant::now();
+            println!(
+                "[Crop Box] x: {}, y: {}, w: {}, h: {}",
+                crop.x, crop.y, crop.width, crop.height
+            );
+        }
     }
 
     fn drain_queue_and_get_latest_frame(&mut self, rx_frame: &Receiver<FrameBuffer>) -> bool {
@@ -285,17 +380,60 @@ impl DisplayWindow {
         received_new_frame
     }
 
-    pub fn render_latest(&mut self, rx_frame: &Receiver<FrameBuffer>) -> Result<()> {
+    pub fn render_latest(
+        &mut self,
+        rx_frame: &Receiver<FrameBuffer>,
+        crop_area: &Arc<RwLock<CropArea>>,
+    ) -> Result<()> {
+        self.handle_input(crop_area);
+
         let has_new_frame = self.drain_queue_and_get_latest_frame(rx_frame);
 
         if has_new_frame {
+            self.render_buffer.copy_from_slice(&self.current_frame);
+
+            // デバッグビルド 且つ show_debug_frame が true の場合のみ描画
+            if cfg!(debug_assertions) && self.show_debug_frame {
+                let crop = *crop_area.read().unwrap();
+                draw_red_box(&mut self.render_buffer, self.width, self.height, &crop);
+            }
+
             self.window
-                .update_with_buffer(&self.current_frame, self.width, self.height)?;
+                .update_with_buffer(&self.render_buffer, self.width, self.height)?;
         } else {
             self.window.update();
             thread::sleep(Duration::from_millis(1));
         }
 
         Ok(())
+    }
+}
+
+fn draw_red_box(buffer: &mut [u32], img_w: usize, img_h: usize, crop: &CropArea) {
+    const RED_COLOR: u32 = 0x00FF_0000;
+    let thickness = 3;
+
+    let x1 = crop.x;
+    let y1 = crop.y;
+    let x2 = (crop.x + crop.width).min(img_w);
+    let y2 = (crop.y + crop.height).min(img_h);
+
+    for t in 0..thickness {
+        for x in x1..x2 {
+            if y1 + t < img_h {
+                buffer[(y1 + t) * img_w + x] = RED_COLOR;
+            }
+            if y2.saturating_sub(1 + t) < img_h {
+                buffer[(y2.saturating_sub(1 + t)) * img_w + x] = RED_COLOR;
+            }
+        }
+        for y in y1..y2 {
+            if x1 + t < img_w {
+                buffer[y * img_w + (x1 + t)] = RED_COLOR;
+            }
+            if x2.saturating_sub(1 + t) < img_w {
+                buffer[y * img_w + x2.saturating_sub(1 + t)] = RED_COLOR;
+            }
+        }
     }
 }

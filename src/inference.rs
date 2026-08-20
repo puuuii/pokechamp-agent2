@@ -1,8 +1,10 @@
 use crossbeam_channel::Receiver;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::hardware::FrameBuffer;
+use crate::video::CropArea;
 
 #[cfg(windows)]
 use windows::{
@@ -33,10 +35,14 @@ pub struct InferenceConfig {
 pub struct InferenceWorker;
 
 impl InferenceWorker {
-    pub fn spawn(rx_ml: Receiver<FrameBuffer>, config: InferenceConfig) {
+    pub fn spawn(
+        rx_ml: Receiver<FrameBuffer>,
+        config: InferenceConfig,
+        crop_area: Arc<RwLock<CropArea>>,
+    ) {
         thread::spawn(move || {
             #[cfg(windows)]
-            if let Err(e) = Self::run_ocr_loop(rx_ml, config) {
+            if let Err(e) = Self::run_ocr_loop(rx_ml, config, crop_area) {
                 eprintln!("OCR Worker error: {e}");
             }
 
@@ -46,7 +52,11 @@ impl InferenceWorker {
     }
 
     #[cfg(windows)]
-    fn run_ocr_loop(rx_ml: Receiver<FrameBuffer>, config: InferenceConfig) -> anyhow::Result<()> {
+    fn run_ocr_loop(
+        rx_ml: Receiver<FrameBuffer>,
+        config: InferenceConfig,
+        crop_area: Arc<RwLock<CropArea>>,
+    ) -> anyhow::Result<()> {
         let ja_lang = Language::CreateLanguage(&windows::core::HSTRING::from("ja-JP"))?;
 
         if !OcrEngine::IsLanguageSupported(&ja_lang)? {
@@ -58,23 +68,31 @@ impl InferenceWorker {
         const OCR_INTERVAL: Duration = Duration::from_secs(3);
         let mut last_ocr_time = Instant::now() - OCR_INTERVAL;
 
-        let target_text = "選出してください";
-
         for frame in rx_ml.iter() {
             if last_ocr_time.elapsed() < OCR_INTERVAL {
                 continue;
             }
             last_ocr_time = Instant::now();
 
-            // 1. 画面全体の前処理（白黒二値化でコントラスト強調）
-            let rgba_bytes = preprocess_full_frame(&frame);
+            let crop = *crop_area.read().unwrap();
 
-            // 2. ビットマップの作成
-            let bitmap = match create_software_bitmap(
-                &rgba_bytes,
-                config.resolution.width,
-                config.resolution.height,
-            ) {
+            // 1. バイリニア3倍拡大 ＋ 高輝度（白文字の芯）抽出 ＋ 白背景黒文字化
+            let scale_factor = 3.0f32;
+            let (rgba_bytes, scaled_w, scaled_h) = preprocess_white_text_extraction(
+                &frame,
+                config.resolution.width as usize,
+                config.resolution.height as usize,
+                crop,
+                scale_factor,
+            );
+
+            if rgba_bytes.is_empty() {
+                continue;
+            }
+
+            // 2. SoftwareBitmap を生成
+            let bitmap = match create_software_bitmap(&rgba_bytes, scaled_w as u32, scaled_h as u32)
+            {
                 Ok(bm) => bm,
                 Err(e) => {
                     eprintln!("Failed to create SoftwareBitmap: {e}");
@@ -87,16 +105,10 @@ impl InferenceWorker {
             if let Ok(result) = async_op.get() {
                 if let Ok(recognized_text) = result.Text() {
                     let raw_text = recognized_text.to_string();
-
-                    // スペース、全角スペース、改行をすべて削除して1つの文字列に結合
                     let normalized_text: String =
                         raw_text.chars().filter(|c| !c.is_whitespace()).collect();
 
-                    if normalized_text.contains(target_text) {
-                        println!("[OCR SUCCESS] 画面内に「{target_text}」を検出しました！");
-                    } else {
-                        println!("[OCR Debug] 検出結果(正規化済): {normalized_text}");
-                    }
+                    println!("[OCR Normalized] {normalized_text}");
                 }
             }
         }
@@ -105,30 +117,104 @@ impl InferenceWorker {
     }
 }
 
-/// 画面全体のコントラストを強調（白黒二値化）して RGBA バイト列に変換する
+/// バイリニア補間（2D）で画素を取得
+#[inline(always)]
+fn bilinear_sample(frame: &[u32], full_w: usize, full_h: usize, x: f32, y: f32) -> (u8, u8, u8) {
+    let x0 = (x.floor() as usize).min(full_w - 1);
+    let y0 = (y.floor() as usize).min(full_h - 1);
+    let x1 = (x0 + 1).min(full_w - 1);
+    let y1 = (y0 + 1).min(full_h - 1);
+
+    let dx = x - x0 as f32;
+    let dy = y - y0 as f32;
+
+    let p00 = frame[y0 * full_w + x0];
+    let p10 = frame[y0 * full_w + x1];
+    let p01 = frame[y1 * full_w + x0];
+    let p11 = frame[y1 * full_w + x1];
+
+    let unpack = |p: u32| {
+        (
+            ((p >> 16) & 0xFF) as f32,
+            ((p >> 8) & 0xFF) as f32,
+            (p & 0xFF) as f32,
+        )
+    };
+
+    let (r00, g00, b00) = unpack(p00);
+    let (r10, g10, b10) = unpack(p10);
+    let (r01, g01, b01) = unpack(p01);
+    let (r11, g11, b11) = unpack(p11);
+
+    let r = r00 * (1.0 - dx) * (1.0 - dy)
+        + r10 * dx * (1.0 - dy)
+        + r01 * (1.0 - dx) * dy
+        + r11 * dx * dy;
+    let g = g00 * (1.0 - dx) * (1.0 - dy)
+        + g10 * dx * (1.0 - dy)
+        + g01 * (1.0 - dx) * dy
+        + g11 * dx * dy;
+    let b = b00 * (1.0 - dx) * (1.0 - dy)
+        + b10 * dx * (1.0 - dy)
+        + b01 * (1.0 - dx) * dy
+        + b11 * dx * dy;
+
+    (r as u8, g as u8, b as u8)
+}
+
+/// ゲーム画面のUI文字（高輝度な白文字）を切り出し、白背景・黒文字化する前処理
 #[cfg(windows)]
-fn preprocess_full_frame(frame: &[u32]) -> Vec<u8> {
-    let mut rgba = Vec::with_capacity(frame.len() * 4);
+fn preprocess_white_text_extraction(
+    frame: &[u32],
+    full_width: usize,
+    full_height: usize,
+    crop: CropArea,
+    scale_factor: f32,
+) -> (Vec<u8>, usize, usize) {
+    let scaled_w = ((crop.width as f32) * scale_factor) as usize;
+    let scaled_h = ((crop.height as f32) * scale_factor) as usize;
 
-    for &pixel in frame {
-        let r = ((pixel >> 16) & 0xFF) as u32;
-        let g = ((pixel >> 8) & 0xFF) as u32;
-        let b = (pixel & 0xFF) as u32;
-
-        // 輝度（明るさ）の計算
-        let luma = (r * 299 + g * 587 + b * 114) / 1000;
-
-        // 二値化処理: 明るい文字（白など）を強調し、背景ノイズを切る
-        // ※ゲーム画面の文字色に合わせて閾値(170)は適宜調整可能
-        let val = if luma > 170 { 255u8 } else { 0u8 };
-
-        rgba.push(val); // R
-        rgba.push(val); // G
-        rgba.push(val); // B
-        rgba.push(255); // A
+    if scaled_w == 0 || scaled_h == 0 {
+        return (Vec::new(), 0, 0);
     }
 
-    rgba
+    let mut rgba = Vec::with_capacity(scaled_w * scaled_h * 4);
+
+    let max_x = (crop.x + crop.width).min(full_width);
+    let max_y = (crop.y + crop.height).min(full_height);
+    let crop_w = max_x.saturating_sub(crop.x);
+    let crop_h = max_y.saturating_sub(crop.y);
+
+    if crop_w == 0 || crop_h == 0 {
+        return (Vec::new(), 0, 0);
+    }
+
+    // 白文字抽出の閾値 (RGBがすべてこの値以上＝ほぼ白色の芯だけ抽出)
+    const WHITE_THRESHOLD: u8 = 180;
+
+    for sy in 0..scaled_h {
+        let src_y = crop.y as f32 + (sy as f32 / scale_factor).min((crop_h - 1) as f32);
+
+        for sx in 0..scaled_w {
+            let src_x = crop.x as f32 + (sx as f32 / scale_factor).min((crop_w - 1) as f32);
+
+            let (r, g, b) = bilinear_sample(frame, full_width, full_height, src_x, src_y);
+
+            // R, G, B のすべてが高く「白い文字の芯」と判定できるピクセルか？
+            let is_white_text_core =
+                r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
+
+            // OCRが最も認識しやすい「白背景(255) に 黒文字(0)」へ変換
+            let val = if is_white_text_core { 0u8 } else { 255u8 };
+
+            rgba.push(val); // R
+            rgba.push(val); // G
+            rgba.push(val); // B
+            rgba.push(255); // A
+        }
+    }
+
+    (rgba, scaled_w, scaled_h)
 }
 
 #[cfg(windows)]
