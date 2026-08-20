@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     InferenceWorker::spawn(
         rx_ml,
         InferenceConfig {
-            resolution: ModelInputResolution::STANDARD_224X224,
+            resolution: ModelInputResolution::STANDARD_1280X720,
         },
     );
 

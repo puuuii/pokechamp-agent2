@@ -12,3 +12,11 @@ crossbeam-channel = "0.5"
 cpal = "0.15"
 ringbuf = "0.4"
 rayon = "1.12.0"
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+] }
