@@ -35,8 +35,8 @@ impl VideoConfig {
 impl Default for VideoConfig {
     fn default() -> Self {
         Self {
-            width: 1920,
-            height: 1080,
+            width: 1280,
+            height: 720,
             fps: 60,
             camera_index: 0,
             frame_format: FrameFormat::YUYV,
