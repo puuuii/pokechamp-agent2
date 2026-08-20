@@ -363,13 +363,6 @@ pub mod audio {
         ((samples_per_second_all_channels * latency_ms) / MILLISECONDS_PER_SECOND) as usize
     }
 
-    fn downmix_interleaved_to_mono(interleaved_samples: &[f32], channel_count: usize) -> Vec<f32> {
-        interleaved_samples
-            .chunks_exact(channel_count)
-            .map(|frame| frame.iter().sum::<f32>() / channel_count as f32)
-            .collect()
-    }
-
     #[inline(always)]
     fn linear_interpolate(start_sample: f32, end_sample: f32, interpolation_factor: f32) -> f32 {
         start_sample + (end_sample - start_sample) * interpolation_factor
@@ -422,14 +415,18 @@ pub mod audio {
             let (mut audio_producer, mut audio_consumer) = ring_buffer.split();
 
             let sample_rate_resample_ratio = out_sample_rate as f64 / in_sample_rate as f64;
-            let mut previous_block_last_mono_sample: f32 = SILENCE_SAMPLE;
+
+            // ブロック跨ぎ補間用に、前回のブロックの最終「フレーム（全chのサンプル）」を保持
+            let mut previous_block_last_frame = vec![SILENCE_SAMPLE; in_channels];
 
             let input_stream = input_device.build_input_stream(
                 &input_config.into(),
                 move |raw_input_data: &[f32], _| {
-                    let mono_input_frames =
-                        downmix_interleaved_to_mono(raw_input_data, in_channels);
-                    let input_frame_count = mono_input_frames.len();
+                    if raw_input_data.is_empty() {
+                        return;
+                    }
+
+                    let input_frame_count = raw_input_data.len() / in_channels;
                     if input_frame_count == 0 {
                         return;
                     }
@@ -439,31 +436,47 @@ pub mod audio {
 
                     for output_index in 0..output_frame_count {
                         let source_position = output_index as f64 / sample_rate_resample_ratio;
-                        let lower_sample_index = source_position.floor() as isize;
+                        let lower_frame_index = source_position.floor() as isize;
                         let interpolation_fraction =
                             (source_position - source_position.floor()) as f32;
 
-                        let start_sample = if lower_sample_index < 0 {
-                            previous_block_last_mono_sample
+                        // 補間元となる前後フレーム（全チャンネル分のデータスライス）を取得
+                        let start_frame: &[f32] = if lower_frame_index < 0 {
+                            &previous_block_last_frame
                         } else {
-                            mono_input_frames[lower_sample_index as usize]
+                            let start_idx = lower_frame_index as usize * in_channels;
+                            &raw_input_data[start_idx..start_idx + in_channels]
                         };
 
-                        let end_sample = if (lower_sample_index + 1) as usize >= input_frame_count {
-                            *mono_input_frames.last().unwrap()
-                        } else {
-                            mono_input_frames[(lower_sample_index + 1) as usize]
-                        };
+                        let end_frame: &[f32] =
+                            if (lower_frame_index + 1) as usize >= input_frame_count {
+                                let last_idx = (input_frame_count - 1) * in_channels;
+                                &raw_input_data[last_idx..last_idx + in_channels]
+                            } else {
+                                let end_idx = (lower_frame_index + 1) as usize * in_channels;
+                                &raw_input_data[end_idx..end_idx + in_channels]
+                            };
 
-                        let resampled_value =
-                            linear_interpolate(start_sample, end_sample, interpolation_fraction);
+                        // 出力チャンネルごとに個別に線形補間を実行
+                        for out_ch in 0..out_channels {
+                            // 入力チャンネルと出力チャンネルを対応付け（入力が1chで出力が2chの場合は0ch目を複製）
+                            let in_ch = if out_ch < in_channels { out_ch } else { 0 };
 
-                        for _ in 0..out_channels {
+                            let resampled_value = linear_interpolate(
+                                start_frame[in_ch],
+                                end_frame[in_ch],
+                                interpolation_fraction,
+                            );
+
                             let _ = audio_producer.try_push(resampled_value);
                         }
                     }
 
-                    previous_block_last_mono_sample = *mono_input_frames.last().unwrap();
+                    // 今回のブロックの最終フレームを保存
+                    let last_frame_start = (input_frame_count - 1) * in_channels;
+                    previous_block_last_frame.copy_from_slice(
+                        &raw_input_data[last_frame_start..last_frame_start + in_channels],
+                    );
                 },
                 move |err| eprintln!("Audio input stream error: {err}"),
                 None,
@@ -483,7 +496,6 @@ pub mod audio {
             input_stream.play()?;
             output_stream.play()?;
 
-            // 音声ストリームのバックグラウンド動作中、現在のスレッドをブロックして生存を維持
             thread::park();
             Ok(())
         }
