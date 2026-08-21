@@ -3,6 +3,7 @@ mod colorspace;
 mod crop;
 mod display;
 mod pipeline;
+mod text;
 #[allow(unused_imports)]
 pub use capture::NokhwaCapture;
 pub use crop::{CropArea, PixelCropArea};
