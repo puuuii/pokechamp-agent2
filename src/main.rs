@@ -20,7 +20,6 @@ fn main() -> Result<()> {
     let capture_service = CaptureService::new(video_config, ML_SUBSAMPLING_INTERVAL_FRAMES);
     let (rx_display, rx_ml) = capture_service.spawn_loop()?;
 
-    // スレッド間で共有するクロップ領域設定
     let crop_area = Arc::new(RwLock::new(CropArea::default_720p()));
 
     thread::spawn(move || {
