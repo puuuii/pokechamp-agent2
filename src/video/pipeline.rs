@@ -80,13 +80,6 @@ impl CaptureService {
                         frame_buffer,
                     );
                 }
-
-                captured_frames_this_second += 1;
-                if fps_timer.elapsed().as_secs() >= 1 {
-                    println!("Capture FPS: {captured_frames_this_second}");
-                    captured_frames_this_second = 0;
-                    fps_timer = Instant::now();
-                }
             }
         });
 
