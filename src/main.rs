@@ -9,18 +9,19 @@ use std::thread;
 
 use audio::CpalAudioPassthrough;
 use hardware::{AudioPipeline, HardwareProfile};
-use inference::{InferenceConfig, InferenceWorker, ModelInputResolution};
+use inference::{InferenceConfig, InferenceWorker, ModelInputResolution, PhaseStatus};
 use video::{CaptureService, CropArea, DisplayWindow, VideoConfig};
 
 fn main() -> Result<()> {
     let video_config = VideoConfig::default();
 
-    const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30; // ~2 FPS under 60 FPS capture
+    const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30;
 
     let capture_service = CaptureService::new(video_config, ML_SUBSAMPLING_INTERVAL_FRAMES);
     let (rx_display, rx_ml) = capture_service.spawn_loop()?;
 
     let crop_area = Arc::new(RwLock::new(CropArea::default_relative()));
+    let phase_status: PhaseStatus = Arc::new(RwLock::new(String::new()));
 
     thread::spawn(move || {
         let audio_pipeline =
@@ -36,6 +37,7 @@ fn main() -> Result<()> {
             resolution: ModelInputResolution::STANDARD_1280X720,
         },
         Arc::clone(&crop_area),
+        Arc::clone(&phase_status),
     );
 
     let display_resolution = video_config.resolution();
@@ -47,7 +49,7 @@ fn main() -> Result<()> {
     println!("========================================================\n");
 
     while window.is_open() {
-        window.render_latest(&rx_display, &crop_area)?;
+        window.render_latest(&rx_display, &crop_area, &phase_status)?;
     }
 
     Ok(())

@@ -1,6 +1,8 @@
+use super::jp_text::JpTextRenderer;
 use super::text::draw_text;
 use super::{CropArea, PixelCropArea};
 use crate::hardware::FrameBuffer;
+use crate::inference::PhaseStatus;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use minifb::{Key, Window, WindowOptions};
@@ -11,14 +13,16 @@ use std::time::{Duration, Instant};
 const STEP: f32 = 0.0025; // 移動・リサイズの相対ステップ
 
 // --- UI余白パネル関連 -----------------------------------------------
-// 今後ここに項目一覧やステータス表示などのUIコンポーネントを足していく想定。
-// サイズは仮値。
 const LEFT_PANEL_WIDTH: usize = 200;
 const RIGHT_PANEL_WIDTH: usize = 200;
 const BOTTOM_PANEL_HEIGHT: usize = 100;
 
-const PANEL_BACKGROUND_COLOR: u32 = 0x0020_2020; // ダークグレー
-const PANEL_TEXT_COLOR: u32 = 0x00FF_FFFF; // 白
+const PANEL_BACKGROUND_COLOR: u32 = 0x0020_2020;
+const PANEL_TEXT_COLOR: u32 = 0x00FF_FFFF;
+
+const PHASE_TEXT_X: usize = 10;
+const PHASE_TEXT_Y: usize = 40;
+const PHASE_TEXT_PIXEL_HEIGHT: f32 = 20.0;
 
 pub struct DisplayWindow {
     window: Window,
@@ -30,6 +34,9 @@ pub struct DisplayWindow {
     render_buffer: Vec<u32>,
     last_input_time: Instant,
     show_debug_frame: bool,
+    jp_text_renderer: Option<JpTextRenderer>,
+    last_phase_text_size: (usize, usize),
+    last_phase_text: String,
 }
 
 impl DisplayWindow {
@@ -44,6 +51,14 @@ impl DisplayWindow {
         const UNCAPPED_FPS: usize = 0;
         window.set_target_fps(UNCAPPED_FPS);
 
+        let jp_text_renderer = match JpTextRenderer::load_system_font() {
+            Ok(renderer) => Some(renderer),
+            Err(e) => {
+                eprintln!("[UI] 日本語フォント読み込み失敗。フェーズ表示は無効化: {e}");
+                None
+            }
+        };
+
         let mut display = Self {
             window,
             video_width,
@@ -54,6 +69,9 @@ impl DisplayWindow {
             render_buffer: vec![0u32; total_width * total_height],
             last_input_time: Instant::now(),
             show_debug_frame: cfg!(debug_assertions),
+            jp_text_renderer,
+            last_phase_text_size: (0, 0),
+            last_phase_text: String::new(),
         };
 
         display.init_static_ui();
@@ -61,16 +79,11 @@ impl DisplayWindow {
         Ok(display)
     }
 
-    /// 映像描画領域以外(左右・下の余白パネル)を初期化時に一度だけ描画する。
-    /// 映像フレームは毎フレーム中央部分だけ上書きされるので、ここで描いた
-    /// 背景色や文字はそのまま残り続ける。
     fn init_static_ui(&mut self) {
-        // 背景を塗る(映像領域は後で毎フレーム上書きされるので気にしなくてよい)
         for pixel in self.render_buffer.iter_mut() {
             *pixel = PANEL_BACKGROUND_COLOR;
         }
 
-        // 右パネルに動作確認用テキスト
         let right_panel_x = LEFT_PANEL_WIDTH + self.video_width + 10;
         draw_text(
             &mut self.render_buffer,
@@ -84,7 +97,6 @@ impl DisplayWindow {
             2,
         );
 
-        // 下パネルに動作確認用テキスト
         let bottom_panel_y = self.video_height + 10;
         draw_text(
             &mut self.render_buffer,
@@ -175,8 +187,6 @@ impl DisplayWindow {
         received_new_frame
     }
 
-    /// 映像フレーム(video_width x video_height)を render_buffer 内の
-    /// 映像描画領域(左余白ぶんオフセットした位置)に行単位でコピーする。
     fn blit_video_frame(&mut self) {
         for row in 0..self.video_height {
             let src_start = row * self.video_width;
@@ -190,12 +200,56 @@ impl DisplayWindow {
         }
     }
 
+    fn update_phase_panel(&mut self, phase_status: &PhaseStatus) {
+        let current_text = phase_status.read().unwrap().clone();
+
+        if current_text == self.last_phase_text {
+            return;
+        }
+
+        let Some(renderer) = &self.jp_text_renderer else {
+            self.last_phase_text = current_text;
+            return;
+        };
+
+        let (last_w, last_h) = self.last_phase_text_size;
+        clear_rect(
+            &mut self.render_buffer,
+            self.total_width,
+            self.total_height,
+            PHASE_TEXT_X,
+            PHASE_TEXT_Y,
+            last_w,
+            last_h,
+            PANEL_BACKGROUND_COLOR,
+        );
+
+        self.last_phase_text_size = if current_text.is_empty() {
+            (0, 0)
+        } else {
+            renderer.draw(
+                &mut self.render_buffer,
+                self.total_width,
+                self.total_height,
+                PHASE_TEXT_X,
+                PHASE_TEXT_Y,
+                &current_text,
+                PANEL_TEXT_COLOR,
+                PHASE_TEXT_PIXEL_HEIGHT,
+            )
+        };
+
+        self.last_phase_text = current_text;
+    }
+
     pub fn render_latest(
         &mut self,
         rx_frame: &Receiver<FrameBuffer>,
         crop_area: &Arc<RwLock<CropArea>>,
+        phase_status: &PhaseStatus,
     ) -> Result<()> {
         self.handle_input(crop_area);
+        self.update_phase_panel(phase_status);
 
         let has_new_frame = self.drain_queue_and_get_latest_frame(rx_frame);
 
@@ -231,8 +285,31 @@ impl DisplayWindow {
     }
 }
 
-/// crop は映像座標系(オフセットなし)のピクセル範囲。
-/// offset_x / offset_y で render_buffer 内の映像描画開始位置ぶんずらして描画する。
+fn clear_rect(
+    buffer: &mut [u32],
+    buf_w: usize,
+    buf_h: usize,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    color: u32,
+) {
+    for row in 0..h {
+        let py = y + row;
+        if py >= buf_h {
+            break;
+        }
+        for col in 0..w {
+            let px = x + col;
+            if px >= buf_w {
+                break;
+            }
+            buffer[py * buf_w + px] = color;
+        }
+    }
+}
+
 fn draw_red_box(
     buffer: &mut [u32],
     buf_w: usize,
