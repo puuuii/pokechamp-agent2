@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::hardware::{FrameBuffer, VideoSource};
 
@@ -51,9 +51,7 @@ impl CaptureService {
                 }
             };
 
-            let mut captured_frames_this_second = 0u32;
             let mut frames_since_last_ml_sample = 0u32;
-            let mut fps_timer = Instant::now();
 
             loop {
                 let frame_buffer = match camera_source.capture_frame() {

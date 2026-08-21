@@ -1,3 +1,5 @@
+use super::{CropArea, PixelCropArea};
+use crate::hardware::FrameBuffer;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use minifb::{Key, Window, WindowOptions};
@@ -5,9 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::hardware::FrameBuffer;
-
-use super::CropArea;
+const STEP: f32 = 0.0025; // 移動・リサイズの相対ステップ
 
 pub struct DisplayWindow {
     window: Window,
@@ -56,51 +56,50 @@ impl DisplayWindow {
         let mut crop = crop_area.write().unwrap();
         let shift =
             self.window.is_key_down(Key::LeftShift) || self.window.is_key_down(Key::RightShift);
-        let step = 2;
 
         let mut changed = false;
 
         if shift {
             if self.window.is_key_down(Key::Left) {
-                crop.width = crop.width.saturating_sub(step);
+                crop.width -= STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Right) {
-                crop.width += step;
+                crop.width += STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Up) {
-                crop.height = crop.height.saturating_sub(step);
+                crop.height -= STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Down) {
-                crop.height += step;
+                crop.height += STEP;
                 changed = true;
             }
         } else {
             if self.window.is_key_down(Key::Left) {
-                crop.x = crop.x.saturating_sub(step);
+                crop.x -= STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Right) {
-                crop.x += step;
+                crop.x += STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Up) {
-                crop.y = crop.y.saturating_sub(step);
+                crop.y -= STEP;
                 changed = true;
             }
             if self.window.is_key_down(Key::Down) {
-                crop.y += step;
+                crop.y += STEP;
                 changed = true;
             }
         }
 
         if changed {
-            crop.clamp(self.width, self.height);
+            crop.clamp();
             self.last_input_time = Instant::now();
             println!(
-                "[Crop Box] x: {}, y: {}, w: {}, h: {}",
+                "[Crop Box] x: {:.4}, y: {:.4}, w: {:.4}, h: {:.4}",
                 crop.x, crop.y, crop.width, crop.height
             );
         }
@@ -128,7 +127,7 @@ impl DisplayWindow {
             self.render_buffer.copy_from_slice(&self.current_frame);
 
             if cfg!(debug_assertions) && self.show_debug_frame {
-                let crop = *crop_area.read().unwrap();
+                let crop = crop_area.read().unwrap().to_pixels(self.width, self.height);
                 draw_red_box(&mut self.render_buffer, self.width, self.height, &crop);
             }
 
@@ -143,7 +142,7 @@ impl DisplayWindow {
     }
 }
 
-fn draw_red_box(buffer: &mut [u32], img_w: usize, img_h: usize, crop: &CropArea) {
+fn draw_red_box(buffer: &mut [u32], img_w: usize, img_h: usize, crop: &PixelCropArea) {
     const RED_COLOR: u32 = 0x00FF_0000;
     let thickness = 3;
 

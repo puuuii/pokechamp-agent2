@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let capture_service = CaptureService::new(video_config, ML_SUBSAMPLING_INTERVAL_FRAMES);
     let (rx_display, rx_ml) = capture_service.spawn_loop()?;
 
-    let crop_area = Arc::new(RwLock::new(CropArea::default_720p()));
+    let crop_area = Arc::new(RwLock::new(CropArea::default_relative()));
 
     thread::spawn(move || {
         let audio_pipeline =

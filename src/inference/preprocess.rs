@@ -1,5 +1,4 @@
-use crate::video::CropArea;
-
+use crate::video::PixelCropArea;
 #[inline(always)]
 fn bilinear_sample(frame: &[u32], full_w: usize, full_h: usize, x: f32, y: f32) -> (u8, u8, u8) {
     let x0 = (x.floor() as usize).min(full_w - 1);
@@ -48,7 +47,7 @@ pub fn preprocess_white_text_extraction(
     frame: &[u32],
     full_width: usize,
     full_height: usize,
-    crop: CropArea,
+    crop: PixelCropArea,
     scale_factor: f32,
 ) -> (Vec<u8>, usize, usize) {
     let scaled_w = ((crop.width as f32) * scale_factor) as usize;

@@ -37,7 +37,10 @@ pub fn run_ocr_loop(
         }
         last_ocr_time = Instant::now();
 
-        let crop = *crop_area.read().unwrap();
+        let crop = crop_area.read().unwrap().to_pixels(
+            config.resolution.width as usize,
+            config.resolution.height as usize,
+        );
 
         let scale_factor = 3.0f32;
         let (rgba_bytes, scaled_w, scaled_h) = preprocess_white_text_extraction(
