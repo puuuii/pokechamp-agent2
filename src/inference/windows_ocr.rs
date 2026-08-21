@@ -92,13 +92,35 @@ pub fn run_ocr_loop(
         // 今の状態に応じて、評価すべき判定だけを実行する(順序を担保する要)。
         match current_phase {
             GamePhase::WaitingOrEnded => {
-                // 待機/終了のときだけ、リボン検出を評価する。
+                // まず「対戦終了」文字列がまだ表示されているか確認
+                let ended_crop = PHASE_ENDED_CROP.to_pixels(
+                    config.resolution.width as usize,
+                    config.resolution.height as usize,
+                );
+
+                let ended_text =
+                    recognize_text_in_crop(&ocr_engine, &frame, &config, ended_crop, 3.0)?;
+
+                let ended_matched = ended_text
+                    .as_deref()
+                    .map(count_matched_chars(&PHASE_ENDED_TARGET_CHARS))
+                    .unwrap_or(0);
+
+                // 対戦終了文字列が残っている間は、このフェーズに留まる
+                if ended_matched >= PHASE_ENDED_MATCH_THRESHOLD {
+                    set_phase_text(&phase_status, "フェーズ：対戦終了");
+                    continue;
+                }
+
+                // 対戦終了文字列が消えたら、待機状態としてランクバトルを監視
                 let ribbon_crop = PHASE_RIBBON_CROP.to_pixels(
                     config.resolution.width as usize,
                     config.resolution.height as usize,
                 );
+
                 let ribbon_text =
                     recognize_text_in_crop(&ocr_engine, &frame, &config, ribbon_crop, 3.0)?;
+
                 let ribbon_matched = ribbon_text
                     .as_deref()
                     .map(count_matched_chars(&PHASE_RIBBON_TARGET_CHARS))
