@@ -1,3 +1,4 @@
+use super::buffer::PixelBuffer;
 use super::jp_text::JpTextRenderer;
 use super::text::draw_text;
 use super::{CropArea, PixelCropArea};
@@ -84,11 +85,12 @@ impl DisplayWindow {
             *pixel = PANEL_BACKGROUND_COLOR;
         }
 
+        let mut buffer =
+            PixelBuffer::new(&mut self.render_buffer, self.total_width, self.total_height);
+
         let right_panel_x = LEFT_PANEL_WIDTH + self.video_width + 10;
         draw_text(
-            &mut self.render_buffer,
-            self.total_width,
-            self.total_height,
+            &mut buffer,
             right_panel_x,
             10,
             "TEST TEXT",
@@ -99,9 +101,7 @@ impl DisplayWindow {
 
         let bottom_panel_y = self.video_height + 10;
         draw_text(
-            &mut self.render_buffer,
-            self.total_width,
-            self.total_height,
+            &mut buffer,
             10,
             bottom_panel_y,
             "TEST TEXT",
@@ -213,10 +213,10 @@ impl DisplayWindow {
         };
 
         let (last_w, last_h) = self.last_phase_text_size;
+        let mut buffer =
+            PixelBuffer::new(&mut self.render_buffer, self.total_width, self.total_height);
         clear_rect(
-            &mut self.render_buffer,
-            self.total_width,
-            self.total_height,
+            &mut buffer,
             PHASE_TEXT_X,
             PHASE_TEXT_Y,
             last_w,
@@ -228,9 +228,7 @@ impl DisplayWindow {
             (0, 0)
         } else {
             renderer.draw(
-                &mut self.render_buffer,
-                self.total_width,
-                self.total_height,
+                &mut buffer,
                 PHASE_TEXT_X,
                 PHASE_TEXT_Y,
                 &current_text,
@@ -261,14 +259,9 @@ impl DisplayWindow {
                     .read()
                     .unwrap()
                     .to_pixels(self.video_width, self.video_height);
-                draw_red_box(
-                    &mut self.render_buffer,
-                    self.total_width,
-                    self.total_height,
-                    LEFT_PANEL_WIDTH,
-                    0,
-                    &crop,
-                );
+                let mut buffer =
+                    PixelBuffer::new(&mut self.render_buffer, self.total_width, self.total_height);
+                draw_red_box(&mut buffer, LEFT_PANEL_WIDTH, 0, &crop);
             }
 
             self.window.update_with_buffer(
@@ -285,16 +278,10 @@ impl DisplayWindow {
     }
 }
 
-fn clear_rect(
-    buffer: &mut [u32],
-    buf_w: usize,
-    buf_h: usize,
-    x: usize,
-    y: usize,
-    w: usize,
-    h: usize,
-    color: u32,
-) {
+fn clear_rect(buffer: &mut PixelBuffer, x: usize, y: usize, w: usize, h: usize, color: u32) {
+    let buf_w = buffer.width;
+    let buf_h = buffer.height;
+    let pixels = buffer.pixels_mut();
     for row in 0..h {
         let py = y + row;
         if py >= buf_h {
@@ -305,21 +292,17 @@ fn clear_rect(
             if px >= buf_w {
                 break;
             }
-            buffer[py * buf_w + px] = color;
+            pixels[py * buf_w + px] = color;
         }
     }
 }
 
-fn draw_red_box(
-    buffer: &mut [u32],
-    buf_w: usize,
-    buf_h: usize,
-    offset_x: usize,
-    offset_y: usize,
-    crop: &PixelCropArea,
-) {
+fn draw_red_box(buffer: &mut PixelBuffer, offset_x: usize, offset_y: usize, crop: &PixelCropArea) {
     const RED_COLOR: u32 = 0x00FF_0000;
     let thickness = 3;
+    let buf_w = buffer.width;
+    let buf_h = buffer.height;
+    let pixels = buffer.pixels_mut();
 
     let x1 = offset_x + crop.x;
     let y1 = offset_y + crop.y;
@@ -329,18 +312,18 @@ fn draw_red_box(
     for t in 0..thickness {
         for x in x1..x2 {
             if y1 + t < buf_h {
-                buffer[(y1 + t) * buf_w + x] = RED_COLOR;
+                pixels[(y1 + t) * buf_w + x] = RED_COLOR;
             }
             if y2.saturating_sub(1 + t) < buf_h {
-                buffer[(y2.saturating_sub(1 + t)) * buf_w + x] = RED_COLOR;
+                pixels[(y2.saturating_sub(1 + t)) * buf_w + x] = RED_COLOR;
             }
         }
         for y in y1..y2 {
             if x1 + t < buf_w {
-                buffer[y * buf_w + (x1 + t)] = RED_COLOR;
+                pixels[y * buf_w + (x1 + t)] = RED_COLOR;
             }
             if x2.saturating_sub(1 + t) < buf_w {
-                buffer[y * buf_w + x2.saturating_sub(1 + t)] = RED_COLOR;
+                pixels[y * buf_w + x2.saturating_sub(1 + t)] = RED_COLOR;
             }
         }
     }

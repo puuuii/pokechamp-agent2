@@ -1,3 +1,4 @@
+mod buffer;
 mod capture;
 mod colorspace;
 mod crop;

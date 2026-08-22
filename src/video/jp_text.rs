@@ -1,3 +1,4 @@
+use super::buffer::PixelBuffer;
 use anyhow::Result;
 use rusttype::{Font, Scale, point};
 
@@ -35,15 +36,16 @@ impl JpTextRenderer {
     /// 描画した領域の (width, height) を返す(次回の再描画時のクリアに使う)。
     pub fn draw(
         &self,
-        buffer: &mut [u32],
-        buf_width: usize,
-        buf_height: usize,
+        buffer: &mut PixelBuffer,
         x: usize,
         y: usize,
         text: &str,
         color: u32,
         pixel_height: f32,
     ) -> (usize, usize) {
+        let buf_width = buffer.width;
+        let buf_height = buffer.height;
+        let pixels = buffer.pixels_mut();
         let scale = Scale::uniform(pixel_height);
         let v_metrics = self.font.v_metrics(scale);
         let offset = point(0.0, v_metrics.ascent);
@@ -73,8 +75,8 @@ impl JpTextRenderer {
 
                     max_x = max_x.max(px + 1 - x);
 
-                    let bg = buffer[py * buf_width + px];
-                    buffer[py * buf_width + px] = blend(bg, color, coverage);
+                    let bg = pixels[py * buf_width + px];
+                    pixels[py * buf_width + px] = blend(bg, color, coverage);
                 });
             }
         }
