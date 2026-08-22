@@ -4,6 +4,7 @@ mod inference;
 mod video;
 
 use anyhow::Result;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
 
@@ -22,6 +23,8 @@ fn main() -> Result<()> {
 
     let crop_area = Arc::new(RwLock::new(CropArea::default_relative()));
     let phase_status: PhaseStatus = Arc::new(RwLock::new(String::new()));
+    // 表示側の▶ボタンで立てる、手動フェーズ進行リクエスト。
+    let manual_phase_advance = Arc::new(AtomicBool::new(false));
 
     thread::spawn(move || {
         let audio_pipeline =
@@ -39,10 +42,12 @@ fn main() -> Result<()> {
         PhaseRules::default(),
         Arc::clone(&crop_area),
         Arc::clone(&phase_status),
+        Arc::clone(&manual_phase_advance),
     );
 
     let display_resolution = video_config.resolution();
-    let mut window = DisplayWindow::open_uncapped("Switch Capture", display_resolution)?;
+    let mut window =
+        DisplayWindow::open_uncapped("Switch Capture", display_resolution, &manual_phase_advance)?;
 
     println!("\n=================== クロップ調整操作 ===================");
     println!("  [矢印キー]           : 赤枠の移動 (X, Y)");

@@ -6,7 +6,8 @@ use crate::hardware::FrameBuffer;
 use crate::inference::PhaseStatus;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,6 +26,12 @@ const PHASE_TEXT_X: usize = 10;
 const PHASE_TEXT_Y: usize = 40;
 const PHASE_TEXT_PIXEL_HEIGHT: f32 = 20.0;
 
+// フェーズテキスト右横の▶ボタン(手動で次のフェーズへ進行)関連
+const PHASE_BUTTON_GAP: usize = 8;
+const PHASE_BUTTON_WIDTH: usize = 12;
+const PHASE_BUTTON_HEIGHT: usize = 16;
+const PHASE_BUTTON_COLOR: u32 = 0x00C8_00FF;
+
 pub struct DisplayWindow {
     window: Window,
     video_width: usize,
@@ -38,10 +45,17 @@ pub struct DisplayWindow {
     jp_text_renderer: Option<JpTextRenderer>,
     last_phase_text_size: (usize, usize),
     last_phase_text: String,
+    phase_button_rect: Option<(usize, usize, usize, usize)>,
+    phase_button_down: bool,
+    manual_phase_advance: Arc<AtomicBool>,
 }
 
 impl DisplayWindow {
-    pub fn open_uncapped(title: &str, video_resolution: (usize, usize)) -> Result<Self> {
+    pub fn open_uncapped(
+        title: &str,
+        video_resolution: (usize, usize),
+        manual_phase_advance: &Arc<AtomicBool>,
+    ) -> Result<Self> {
         let (video_width, video_height) = video_resolution;
 
         let total_width = LEFT_PANEL_WIDTH + video_width + RIGHT_PANEL_WIDTH;
@@ -73,6 +87,9 @@ impl DisplayWindow {
             jp_text_renderer,
             last_phase_text_size: (0, 0),
             last_phase_text: String::new(),
+            phase_button_rect: None,
+            phase_button_down: false,
+            manual_phase_advance: Arc::clone(manual_phase_advance),
         };
 
         display.init_static_ui();
@@ -178,6 +195,38 @@ impl DisplayWindow {
         }
     }
 
+    /// フェーズテキスト右横の▶ボタンのクリックを検出する。
+    /// クリック成立時に手動フェーズ進行フラグを立てる(押下エッジ1回分)。
+    fn handle_phase_button(&mut self) {
+        let pressed = self.window.get_mouse_down(MouseButton::Left);
+        if !pressed {
+            self.phase_button_down = false;
+            return;
+        }
+
+        if self.phase_button_down {
+            return;
+        }
+
+        let Some((button_x, button_y, button_w, button_h)) = self.phase_button_rect else {
+            return;
+        };
+        let Some((mouse_x, mouse_y)) = self.window.get_mouse_pos(MouseMode::Discard) else {
+            return;
+        };
+        let (mouse_x, mouse_y) = (mouse_x as usize, mouse_y as usize);
+
+        if button_x <= mouse_x
+            && mouse_x < button_x + button_w
+            && button_y <= mouse_y
+            && mouse_y < button_y + button_h
+        {
+            self.phase_button_down = true;
+            self.manual_phase_advance.store(true, Ordering::Relaxed);
+            println!("[Phase] 手動フェーズ進行リクエスト");
+        }
+    }
+
     fn drain_queue_and_get_latest_frame(&mut self, rx_frame: &Receiver<FrameBuffer>) -> bool {
         let mut received_new_frame = false;
         while let Ok(latest_frame) = rx_frame.try_recv() {
@@ -223,8 +272,18 @@ impl DisplayWindow {
             last_h,
             PANEL_BACKGROUND_COLOR,
         );
+        if let Some((button_x, button_y, button_w, button_h)) = self.phase_button_rect {
+            clear_rect(
+                &mut buffer,
+                button_x,
+                button_y,
+                button_w,
+                button_h,
+                PANEL_BACKGROUND_COLOR,
+            );
+        }
 
-        self.last_phase_text_size = if current_text.is_empty() {
+        let text_size = if current_text.is_empty() {
             (0, 0)
         } else {
             renderer.draw(
@@ -235,6 +294,17 @@ impl DisplayWindow {
                 PANEL_TEXT_COLOR,
                 PHASE_TEXT_PIXEL_HEIGHT,
             )
+        };
+        self.last_phase_text_size = text_size;
+
+        // テキストの右側に▶ボタンを描く(表示幅に合わせて配置)。
+        self.phase_button_rect = if text_size.0 == 0 {
+            None
+        } else {
+            let button_x = PHASE_TEXT_X + text_size.0 + PHASE_BUTTON_GAP;
+            let button_y = PHASE_TEXT_Y + (text_size.1.saturating_sub(PHASE_BUTTON_HEIGHT)) / 2;
+            draw_phase_button(&mut buffer, button_x, button_y);
+            Some((button_x, button_y, PHASE_BUTTON_WIDTH, PHASE_BUTTON_HEIGHT))
         };
 
         self.last_phase_text = current_text;
@@ -247,6 +317,7 @@ impl DisplayWindow {
         phase_status: &PhaseStatus,
     ) -> Result<()> {
         self.handle_input(crop_area);
+        self.handle_phase_button();
         self.update_phase_panel(phase_status);
 
         let has_new_frame = self.drain_queue_and_get_latest_frame(rx_frame);
@@ -293,6 +364,26 @@ fn clear_rect(buffer: &mut PixelBuffer, x: usize, y: usize, w: usize, h: usize, 
                 break;
             }
             pixels[py * buf_w + px] = color;
+        }
+    }
+}
+
+/// (x, y)を左上とする右向き▶三角(PHASE_BUTTON_WIDTH × PHASE_BUTTON_HEIGHT)を描く。
+fn draw_phase_button(buffer: &mut PixelBuffer, x: usize, y: usize) {
+    let buf_w = buffer.width;
+    let buf_h = buffer.height;
+    let pixels = buffer.pixels_mut();
+    let center = PHASE_BUTTON_HEIGHT as f32 / 2.0;
+
+    for dy in 0..PHASE_BUTTON_HEIGHT {
+        let dist = (dy as f32 - center).abs();
+        let span = (PHASE_BUTTON_WIDTH as f32 * (1.0 - dist / center)) as usize;
+        for dx in 0..span {
+            let px = x + dx;
+            let py = y + dy;
+            if px < buf_w && py < buf_h {
+                pixels[py * buf_w + px] = PHASE_BUTTON_COLOR;
+            }
         }
     }
 }

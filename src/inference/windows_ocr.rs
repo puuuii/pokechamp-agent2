@@ -1,4 +1,5 @@
 use crossbeam_channel::Receiver;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -13,16 +14,40 @@ use crate::hardware::FrameBuffer;
 use crate::video::{CropArea, PixelCropArea};
 
 use super::preprocess::preprocess_white_text_extraction;
-use super::{InferenceConfig, PhaseRules, PhaseTarget};
+use super::{InferenceConfig, ManualPhaseAdvance, PhaseRules, PhaseTarget};
 
-/// ゲームのフェーズ。「待機」と「対戦終了」は同一状態として扱う
-/// (対戦終了後は必ず選出待ちに戻るため、内部状態としては同じ場所)。
-/// 表示テキストだけ、どちらの経路で入ったかで出し分ける。
+/// ゲームのフェーズ。
+/// 「待機」と「対戦終了」は自動判定上は同一の監視状態だが、
+/// 表示テキスト(および手動進行のサイクル)で区別するため別状態として扱う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GamePhase {
-    WaitingOrEnded,
+enum Phase {
+    Waiting,
     Selecting,
     Battling,
+    Ended,
+}
+
+impl Phase {
+    /// 手動進行時の次のフェーズ(選出→バトル→対戦終了→選出…)。
+    /// 待機は起動時のみで、サイクルには含めない。
+    const fn next(self) -> Self {
+        match self {
+            Self::Waiting => Self::Selecting,
+            Self::Selecting => Self::Battling,
+            Self::Battling => Self::Ended,
+            Self::Ended => Self::Selecting,
+        }
+    }
+}
+
+/// 各フェーズの表示テキスト。
+fn phase_display_text(phase_rules: &PhaseRules, phase: Phase) -> &'static str {
+    match phase {
+        Phase::Waiting => phase_rules.waiting_text,
+        Phase::Selecting => phase_rules.ribbon.enter_text,
+        Phase::Battling => phase_rules.battling_text,
+        Phase::Ended => phase_rules.ended.enter_text,
+    }
 }
 
 pub fn run_ocr_loop(
@@ -31,6 +56,7 @@ pub fn run_ocr_loop(
     phase_rules: &PhaseRules,
     crop_area: Arc<RwLock<CropArea>>,
     phase_status: Arc<RwLock<String>>,
+    manual_phase_advance: ManualPhaseAdvance,
 ) -> anyhow::Result<()> {
     let ja_lang = Language::CreateLanguage(&windows::core::HSTRING::from("ja-JP"))?;
 
@@ -44,10 +70,20 @@ pub fn run_ocr_loop(
     let mut last_ocr_time = Instant::now() - OCR_INTERVAL;
 
     // 起動直後は必ず待機状態から始まる。
-    let mut current_phase = GamePhase::WaitingOrEnded;
+    let mut current_phase = Phase::Waiting;
     set_phase_text(&phase_status, phase_rules.waiting_text);
 
     for frame in rx_ml.iter() {
+        // 表示側の▶ボタンからの手動進行リクエスト。
+        if manual_phase_advance.swap(false, Ordering::Relaxed) {
+            current_phase = current_phase.next();
+            set_phase_text(
+                &phase_status,
+                phase_display_text(phase_rules, current_phase),
+            );
+            continue;
+        }
+
         if last_ocr_time.elapsed() < OCR_INTERVAL {
             continue;
         }
@@ -68,13 +104,15 @@ pub fn run_ocr_loop(
         // --- フェーズ遷移判定 ---
         // 今の状態に応じて、評価すべき判定だけを実行する(順序を担保する要)。
         match current_phase {
-            GamePhase::WaitingOrEnded => {
+            // 待機・対戦終了は同一の監視状態として扱う。
+            Phase::Waiting | Phase::Ended => {
                 // まず「対戦終了」文字列がまだ表示されているか確認
                 let ended_matched =
                     ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ended)?;
 
                 // 対戦終了文字列が残っている間は、このフェーズに留まる
                 if ended_matched >= phase_rules.ended.threshold {
+                    current_phase = Phase::Ended;
                     set_phase_text(&phase_status, phase_rules.ended.enter_text);
                     continue;
                 }
@@ -84,28 +122,28 @@ pub fn run_ocr_loop(
                     ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ribbon)?;
 
                 if ribbon_matched >= phase_rules.ribbon.threshold {
-                    current_phase = GamePhase::Selecting;
+                    current_phase = Phase::Selecting;
                     set_phase_text(&phase_status, phase_rules.ribbon.enter_text);
                 }
             }
-            GamePhase::Selecting => {
+            Phase::Selecting => {
                 // 選出中は「ランクバトル」リボンが表示され続けている。
                 // リボンが検出されなくなった時点でバトルフェーズに遷移する。
                 let ribbon_matched =
                     ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ribbon)?;
 
                 if ribbon_matched < phase_rules.ribbon.threshold {
-                    current_phase = GamePhase::Battling;
+                    current_phase = Phase::Battling;
                     set_phase_text(&phase_status, phase_rules.battling_text);
                 }
             }
-            GamePhase::Battling => {
+            Phase::Battling => {
                 // バトル中のときだけ、対戦終了判定を評価する。
                 let ended_matched =
                     ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ended)?;
 
                 if ended_matched >= phase_rules.ended.threshold {
-                    current_phase = GamePhase::WaitingOrEnded;
+                    current_phase = Phase::Ended;
                     set_phase_text(&phase_status, phase_rules.ended.enter_text);
                 }
             }

@@ -4,6 +4,7 @@ mod preprocess;
 mod windows_ocr;
 
 use crossbeam_channel::Receiver;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
 
@@ -86,6 +87,10 @@ impl Default for PhaseRules {
 /// OCR結果から導出したUI表示用ステータス文字列の共有領域。空文字列は「非表示」。
 pub type PhaseStatus = Arc<RwLock<String>>;
 
+/// 表示側からの手動フェーズ進行リクエスト。
+/// OCRワーカーが swap(false) で消費するフラグ。
+pub type ManualPhaseAdvance = Arc<AtomicBool>;
+
 pub struct InferenceWorker;
 
 impl InferenceWorker {
@@ -95,12 +100,18 @@ impl InferenceWorker {
         phase_rules: PhaseRules,
         crop_area: Arc<RwLock<CropArea>>,
         phase_status: PhaseStatus,
+        manual_phase_advance: ManualPhaseAdvance,
     ) {
         thread::spawn(move || {
             #[cfg(windows)]
-            if let Err(e) =
-                windows_ocr::run_ocr_loop(rx_ml, config, &phase_rules, crop_area, phase_status)
-            {
+            if let Err(e) = windows_ocr::run_ocr_loop(
+                rx_ml,
+                config,
+                &phase_rules,
+                crop_area,
+                phase_status,
+                manual_phase_advance,
+            ) {
                 eprintln!("OCR Worker error: {e}");
             }
 
@@ -108,6 +119,7 @@ impl InferenceWorker {
             {
                 let _ = phase_status;
                 let _ = phase_rules;
+                let _ = manual_phase_advance;
                 eprintln!("Windows.Media.Ocr is only supported on Windows.");
             }
         });
