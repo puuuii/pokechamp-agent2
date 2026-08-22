@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "commandWindows": "cargo fmt && cargo check && cargo clippy -- -D warnings",
+            "timeout": 600,
+            "statusMessage": "Running Rust checks..."
+          }
+        ]
+      }
+    ]
+  }
+}
