@@ -12,8 +12,8 @@ use windows::{
 use crate::hardware::FrameBuffer;
 use crate::video::{CropArea, PixelCropArea};
 
-use super::InferenceConfig;
 use super::preprocess::preprocess_white_text_extraction;
+use super::{InferenceConfig, PhaseRules, PhaseTarget};
 
 /// ゲームのフェーズ。「待機」と「対戦終了」は同一状態として扱う
 /// (対戦終了後は必ず選出待ちに戻るため、内部状態としては同じ場所)。
@@ -25,33 +25,10 @@ enum GamePhase {
     Battling,
 }
 
-/// 「ランクバトル」リボン表示の固定クロップ範囲(相対座標)。
-/// リボンが表示され始めたら「選出」フェーズに入り、
-/// リボンが消えたタイミングで「バトル」フェーズに遷移する。
-const PHASE_RIBBON_CROP: CropArea = CropArea {
-    x: 0.3838,
-    y: 0.0175,
-    width: 0.2325,
-    height: 0.0433,
-};
-const PHASE_RIBBON_TARGET_CHARS: [char; 8] = ['ラ', 'ン', 'ク', 'バ', 'ト', 'ル', 'シ', 'グ'];
-const PHASE_RIBBON_MATCH_THRESHOLD: usize = 3;
-
-/// 「フェーズ：対戦終了」判定用の固定クロップ範囲(相対座標)。
-const PHASE_ENDED_CROP: CropArea = CropArea {
-    x: 0.1463,
-    y: 0.8925,
-    width: 0.7050,
-    height: 0.0508,
-};
-const PHASE_ENDED_TARGET_CHARS: [char; 14] = [
-    '対', '戦', 'を', 'や', 'め', 'る', 'チ', 'ー', 'ム', '編', '成', 'す', '続', 'け',
-];
-const PHASE_ENDED_MATCH_THRESHOLD: usize = 5;
-
 pub fn run_ocr_loop(
     rx_ml: Receiver<FrameBuffer>,
     config: InferenceConfig,
+    phase_rules: &PhaseRules,
     crop_area: Arc<RwLock<CropArea>>,
     phase_status: Arc<RwLock<String>>,
 ) -> anyhow::Result<()> {
@@ -68,7 +45,7 @@ pub fn run_ocr_loop(
 
     // 起動直後は必ず待機状態から始まる。
     let mut current_phase = GamePhase::WaitingOrEnded;
-    set_phase_text(&phase_status, "フェーズ：待機");
+    set_phase_text(&phase_status, phase_rules.waiting_text);
 
     for frame in rx_ml.iter() {
         if last_ocr_time.elapsed() < OCR_INTERVAL {
@@ -93,79 +70,43 @@ pub fn run_ocr_loop(
         match current_phase {
             GamePhase::WaitingOrEnded => {
                 // まず「対戦終了」文字列がまだ表示されているか確認
-                let ended_crop = PHASE_ENDED_CROP.to_pixels(
-                    config.resolution.width as usize,
-                    config.resolution.height as usize,
-                );
-
-                let ended_text =
-                    recognize_text_in_crop(&ocr_engine, &frame, &config, ended_crop, 3.0)?;
-
-                let ended_matched = ended_text
-                    .as_deref()
-                    .map(count_matched_chars(&PHASE_ENDED_TARGET_CHARS))
-                    .unwrap_or(0);
+                let ended_matched =
+                    ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ended)?;
 
                 // 対戦終了文字列が残っている間は、このフェーズに留まる
-                if ended_matched >= PHASE_ENDED_MATCH_THRESHOLD {
-                    set_phase_text(&phase_status, "フェーズ：対戦終了");
+                if ended_matched >= phase_rules.ended.threshold {
+                    set_phase_text(&phase_status, phase_rules.ended.enter_text);
                     continue;
                 }
 
                 // 対戦終了文字列が消えたら、待機状態としてランクバトルを監視
-                let ribbon_crop = PHASE_RIBBON_CROP.to_pixels(
-                    config.resolution.width as usize,
-                    config.resolution.height as usize,
-                );
+                let ribbon_matched =
+                    ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ribbon)?;
 
-                let ribbon_text =
-                    recognize_text_in_crop(&ocr_engine, &frame, &config, ribbon_crop, 3.0)?;
-
-                let ribbon_matched = ribbon_text
-                    .as_deref()
-                    .map(count_matched_chars(&PHASE_RIBBON_TARGET_CHARS))
-                    .unwrap_or(0);
-
-                if ribbon_matched >= PHASE_RIBBON_MATCH_THRESHOLD {
+                if ribbon_matched >= phase_rules.ribbon.threshold {
                     current_phase = GamePhase::Selecting;
-                    set_phase_text(&phase_status, "フェーズ：選出");
+                    set_phase_text(&phase_status, phase_rules.ribbon.enter_text);
                 }
             }
             GamePhase::Selecting => {
                 // 選出中は「ランクバトル」リボンが表示され続けている。
                 // リボンが検出されなくなった時点でバトルフェーズに遷移する。
-                let ribbon_crop = PHASE_RIBBON_CROP.to_pixels(
-                    config.resolution.width as usize,
-                    config.resolution.height as usize,
-                );
-                let ribbon_text =
-                    recognize_text_in_crop(&ocr_engine, &frame, &config, ribbon_crop, 3.0)?;
-                let ribbon_matched = ribbon_text
-                    .as_deref()
-                    .map(count_matched_chars(&PHASE_RIBBON_TARGET_CHARS))
-                    .unwrap_or(0);
+                let ribbon_matched =
+                    ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ribbon)?;
 
-                if ribbon_matched < PHASE_RIBBON_MATCH_THRESHOLD {
+                if ribbon_matched < phase_rules.ribbon.threshold {
                     current_phase = GamePhase::Battling;
-                    set_phase_text(&phase_status, "フェーズ：バトル");
+                    set_phase_text(&phase_status, phase_rules.battling_text);
                 }
             }
             GamePhase::Battling => {
                 // バトル中のときだけ、対戦終了判定を評価する。
-                let ended_crop = PHASE_ENDED_CROP.to_pixels(
-                    config.resolution.width as usize,
-                    config.resolution.height as usize,
-                );
-                let ended_text =
-                    recognize_text_in_crop(&ocr_engine, &frame, &config, ended_crop, 3.0)?;
-                let ended_matched = ended_text
-                    .as_deref()
-                    .map(count_matched_chars(&PHASE_ENDED_TARGET_CHARS))
-                    .unwrap_or(0);
+                let ended_matched =
+                    ocr_target_match(&ocr_engine, &frame, &config, &phase_rules.ended)?;
 
-                if ended_matched >= PHASE_ENDED_MATCH_THRESHOLD {
+                if ended_matched >= phase_rules.ended.threshold {
                     current_phase = GamePhase::WaitingOrEnded;
-                    set_phase_text(&phase_status, "フェーズ：対戦終了");
+                    set_phase_text(&phase_status, phase_rules.ended.enter_text);
                 }
             }
         }
@@ -179,6 +120,26 @@ fn set_phase_text(phase_status: &Arc<RwLock<String>>, text: &str) {
     if guard.as_str() != text {
         *guard = text.to_string();
     }
+}
+
+/// PhaseTarget のクロップ範囲でOCRを実行し、対象文字の種類数を返す。
+fn ocr_target_match(
+    ocr_engine: &OcrEngine,
+    frame: &FrameBuffer,
+    config: &InferenceConfig,
+    target: &PhaseTarget,
+) -> anyhow::Result<usize> {
+    let crop = target.crop.to_pixels(
+        config.resolution.width as usize,
+        config.resolution.height as usize,
+    );
+
+    let text = recognize_text_in_crop(ocr_engine, frame, config, crop, 3.0)?;
+
+    Ok(text
+        .as_deref()
+        .map(count_matched_chars(target.target_chars))
+        .unwrap_or(0))
 }
 
 /// 指定クロップ範囲に対してOCRを実行し、空白除去済みの認識テキストを返す。

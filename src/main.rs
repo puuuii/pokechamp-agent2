@@ -9,7 +9,7 @@ use std::thread;
 
 use audio::CpalAudioPassthrough;
 use hardware::{AudioPipeline, HardwareProfile};
-use inference::{InferenceConfig, InferenceWorker, ModelInputResolution, PhaseStatus};
+use inference::{InferenceConfig, InferenceWorker, ModelInputResolution, PhaseRules, PhaseStatus};
 use video::{CaptureService, CropArea, DisplayWindow, VideoConfig};
 
 fn main() -> Result<()> {
@@ -36,6 +36,7 @@ fn main() -> Result<()> {
         InferenceConfig {
             resolution: ModelInputResolution::STANDARD_1280X720,
         },
+        PhaseRules::default(),
         Arc::clone(&crop_area),
         Arc::clone(&phase_status),
     );
