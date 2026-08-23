@@ -40,7 +40,7 @@ impl HardwareProfile {
     pub const AVERMEDIA_LIVE_GAMER_MINI_GC311: Self = Self {
         name: "AVerMedia Live Gamer MINI (GC311)",
         audio_device_keyword: "gc311",
-        video_device_keyword: "avermedia",
+        video_device_keyword: "streamline",
         video: VideoSpec {
             width: 1280,
             height: 720,
