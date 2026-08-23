@@ -5,7 +5,6 @@ mod crop;
 mod display;
 mod jp_text;
 mod pipeline;
-mod text;
 #[allow(unused_imports)]
 pub use capture::NokhwaCapture;
 pub use crop::{CropArea, PixelCropArea};

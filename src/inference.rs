@@ -3,7 +3,10 @@ mod preprocess;
 #[cfg(windows)]
 mod windows_ocr;
 
+use anyhow::Context;
 use crossbeam_channel::Receiver;
+use serde::Deserialize;
+use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -22,6 +25,12 @@ impl ModelInputResolution {
         width: 1280,
         height: 720,
     };
+
+    /// (幅, 高さ) の usize 対として返す。
+    #[allow(dead_code)]
+    pub fn as_usize(&self) -> (usize, usize) {
+        (self.width as usize, self.height as usize)
+    }
 }
 
 #[allow(dead_code)]
@@ -32,24 +41,37 @@ pub struct InferenceConfig {
 /// フェーズ遷移の対象1組の判定パラメータ。
 /// cropは判定領域の相対座標、target_charsはOCRテキストに含まれると判定する文字集合、
 /// thresholdは判定成立に必要な文字の種類数、enter_textは判定成立時の表示文字列。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PhaseTarget {
     pub crop: CropArea,
-    pub target_chars: &'static [char],
+    pub target_chars: Vec<String>,
     pub threshold: usize,
-    pub enter_text: &'static str,
+    pub enter_text: String,
 }
 
 /// フェーズ遷移の全パラメータを束ねたconfig。
 /// ゲーム種別やレイアウトが変わっても、このconfigの追加・変更だけで対応する。
-#[derive(Debug, Clone, Copy)]
+/// 通常は TOML ファイル(config/phase_rules.toml)から読み込む。
+#[derive(Debug, Clone, Deserialize)]
 pub struct PhaseRules {
     pub ribbon: PhaseTarget,
     pub ended: PhaseTarget,
-    pub waiting_text: &'static str,
-    pub battling_text: &'static str,
+    pub waiting_text: String,
+    pub battling_text: String,
 }
 
+impl PhaseRules {
+    /// TOML ファイルからフェーズルールを読み込む。
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("フェーズルールの設定ファイルが読めません: {path}"))?;
+        let rules: PhaseRules = toml::from_str(&contents)
+            .with_context(|| format!("フェーズルールの設定ファイルの解析に失敗しました: {path}"))?;
+        Ok(rules)
+    }
+}
+
+/// 組み込みデフォルト。TOML 設定が読めないときのフォールバック用。
 impl Default for PhaseRules {
     fn default() -> Self {
         Self {
@@ -60,9 +82,11 @@ impl Default for PhaseRules {
                     width: 0.2325,
                     height: 0.0433,
                 },
-                target_chars: &['ラ', 'ン', 'ク', 'バ', 'ト', 'ル', 'シ', 'グ'],
+                target_chars: ["ラ", "ン", "ク", "バ", "ト", "ル", "シ", "グ"]
+                    .map(str::to_string)
+                    .to_vec(),
                 threshold: 3,
-                enter_text: "フェーズ：選出",
+                enter_text: "フェーズ：選出".to_string(),
             },
             ended: PhaseTarget {
                 crop: CropArea {
@@ -71,15 +95,16 @@ impl Default for PhaseRules {
                     width: 0.7050,
                     height: 0.0508,
                 },
-                target_chars: &[
-                    '対', '戦', 'を', 'や', 'め', 'る', 'チ', 'ー', 'ム', '編', '成', 'す', '続',
-                    'け',
-                ],
+                target_chars: [
+                    "対", "戦", "を", "や", "め", "る", "チ", "ー", "ム", "編", "成", "す", "続", "け",
+                ]
+                .map(str::to_string)
+                .to_vec(),
                 threshold: 5,
-                enter_text: "フェーズ：対戦終了",
+                enter_text: "フェーズ：対戦終了".to_string(),
             },
-            waiting_text: "フェーズ：待機",
-            battling_text: "フェーズ：バトル",
+            waiting_text: "フェーズ：待機".to_string(),
+            battling_text: "フェーズ：バトル".to_string(),
         }
     }
 }
@@ -123,5 +148,28 @@ impl InferenceWorker {
                 eprintln!("Windows.Media.Ocr is only supported on Windows.");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PhaseRules;
+
+    /// TOML 設定がパースでき、組み込みデフォルトと一致することを確認する。
+    #[test]
+    fn toml_config_parses_and_matches_default() {
+        let rules = PhaseRules::load("config/phase_rules.toml")
+            .expect("config/phase_rules.toml must parse");
+        let default = PhaseRules::default();
+        assert_eq!(rules.ribbon.crop, default.ribbon.crop);
+        assert_eq!(rules.ribbon.target_chars, default.ribbon.target_chars);
+        assert_eq!(rules.ribbon.threshold, default.ribbon.threshold);
+        assert_eq!(rules.ribbon.enter_text, default.ribbon.enter_text);
+        assert_eq!(rules.ended.crop, default.ended.crop);
+        assert_eq!(rules.ended.target_chars, default.ended.target_chars);
+        assert_eq!(rules.ended.threshold, default.ended.threshold);
+        assert_eq!(rules.ended.enter_text, default.ended.enter_text);
+        assert_eq!(rules.waiting_text, default.waiting_text);
+        assert_eq!(rules.battling_text, default.battling_text);
     }
 }

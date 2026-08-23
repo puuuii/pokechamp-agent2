@@ -1,7 +1,10 @@
+use ringbuf::{HeapProd, traits::Producer};
 use std::time::Duration;
 
 const TARGET_AUDIO_LATENCY: Duration = Duration::from_millis(50);
 const MILLISECONDS_PER_SECOND: u64 = 1000;
+
+pub const SILENCE_SAMPLE: f32 = 0.0;
 
 pub fn calculate_ring_buffer_capacity(sample_rate: u32, channel_count: u32) -> usize {
     let samples_per_second_all_channels = (sample_rate * channel_count) as u64;
@@ -14,3 +17,143 @@ pub fn calculate_ring_buffer_capacity(sample_rate: u32, channel_count: u32) -> u
 pub fn linear_interpolate(start_sample: f32, end_sample: f32, interpolation_factor: f32) -> f32 {
     start_sample + (end_sample - start_sample) * interpolation_factor
 }
+
+/// 入力ストリームブロックをまたぐ線形リサンプリア。
+///
+/// 補間位置が現在のブロック先頭より前に落ちた場合に前ブロックの末尾フレームを
+/// 借りる `previous_block_last_frame` の状態を持つ。これにより、
+/// input_stream コールバックの外側(単体テストなど)でもリサンプリングを走らせる。
+pub struct LinearResampler {
+    ratio: f64,
+    in_channels: usize,
+    out_channels: usize,
+    previous_block_last_frame: Vec<f32>,
+}
+
+impl LinearResampler {
+    /// ratioは出力サンプルレート/入力サンプルレート。
+    pub fn new(in_channels: usize, out_channels: usize, ratio: f64) -> Self {
+        Self {
+            ratio,
+            in_channels,
+            out_channels,
+            previous_block_last_frame: vec![SILENCE_SAMPLE; in_channels],
+        }
+    }
+
+    /// `input`を`producer`へリサンプリングして書き込む。
+    ///
+    /// `input`の長さは`in_channels`の整数倍でなければならない。
+    pub fn resample_into(&mut self, input: &[f32], producer: &mut HeapProd<f32>) {
+        let input_frame_count = input.len() / self.in_channels;
+        if input_frame_count == 0 {
+            return;
+        }
+
+        let output_frame_count =
+            ((input_frame_count as f64) * self.ratio).round() as usize;
+
+        for output_index in 0..output_frame_count {
+            let source_position = output_index as f64 / self.ratio;
+            let lower_frame_index = source_position.floor() as isize;
+            let interpolation_fraction = (source_position - source_position.floor()) as f32;
+
+            let start_frame: &[f32] = if lower_frame_index < 0 {
+                &self.previous_block_last_frame
+            } else {
+                let start_idx = lower_frame_index as usize * self.in_channels;
+                &input[start_idx..start_idx + self.in_channels]
+            };
+
+            let end_frame: &[f32] = if (lower_frame_index + 1) as usize >= input_frame_count {
+                let last_idx = (input_frame_count - 1) * self.in_channels;
+                &input[last_idx..last_idx + self.in_channels]
+            } else {
+                let end_idx = (lower_frame_index + 1) as usize * self.in_channels;
+                &input[end_idx..end_idx + self.in_channels]
+            };
+
+            for out_ch in 0..self.out_channels {
+                let in_ch = if out_ch < self.in_channels { out_ch } else { 0 };
+
+                let resampled_value = linear_interpolate(
+                    start_frame[in_ch],
+                    end_frame[in_ch],
+                    interpolation_fraction,
+                );
+
+                let _ = producer.try_push(resampled_value);
+            }
+        }
+
+        let last_frame_start = (input_frame_count - 1) * self.in_channels;
+        self.previous_block_last_frame.copy_from_slice(
+            &input[last_frame_start..last_frame_start + self.in_channels],
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ringbuf::{HeapRb, traits::{Consumer, Split}};
+
+    fn run(input: &[f32], in_channels: usize, out_channels: usize, ratio: f64) -> Vec<f32> {
+        let mut resampler = LinearResampler::new(in_channels, out_channels, ratio);
+        let ring_buffer = HeapRb::<f32>::new(256);
+        let (mut producer, mut consumer) = ring_buffer.split();
+        resampler.resample_into(input, &mut producer);
+
+        let mut samples = Vec::new();
+        while let Some(sample) = consumer.try_pop() {
+            samples.push(sample);
+        }
+        samples
+    }
+
+    #[test]
+    fn upsamples_with_linear_interpolation() {
+        let samples = run(&[0.0, 0.5, 1.0], 1, 1, 2.0);
+        assert_eq!(samples, vec![0.0, 0.25, 0.5, 0.75, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn downsamples_picking_source_frames() {
+        let samples = run(&[0.0, 1.0, 2.0, 3.0], 1, 1, 0.5);
+        assert_eq!(samples, vec![0.0, 2.0]);
+    }
+
+    #[test]
+    fn upsamples_each_channel_independently() {
+        let samples = run(&[1.0, 10.0, 3.0, 20.0], 2, 2, 1.0);
+        assert_eq!(samples, vec![1.0, 10.0, 3.0, 20.0]);
+    }
+
+    #[test]
+    fn downmixes_output_channels_onto_input_channel_zero() {
+        let samples = run(&[1.0, 10.0, 2.0, 20.0], 2, 1, 1.0);
+        assert_eq!(samples, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn consecutive_blocks_keep_per_block_output_count() {
+        let mut resampler = LinearResampler::new(1, 1, 2.0);
+        let ring_buffer = HeapRb::<f32>::new(64);
+        let (mut producer, mut consumer) = ring_buffer.split();
+
+        resampler.resample_into(&[1.0, 2.0], &mut producer);
+        resampler.resample_into(&[3.0, 4.0], &mut producer);
+
+        let mut samples = Vec::new();
+        while let Some(sample) = consumer.try_pop() {
+            samples.push(sample);
+        }
+        assert_eq!(samples.len(), 8);
+    }
+
+    #[test]
+    fn empty_input_produces_nothing() {
+        assert!(run(&[], 1, 1, 2.0).is_empty());
+    }
+}
+

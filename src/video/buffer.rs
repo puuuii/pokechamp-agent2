@@ -19,4 +19,21 @@ impl<'a> PixelBuffer<'a> {
     pub fn pixels_mut(&mut self) -> &mut [u32] {
         self.pixels
     }
+
+    /// Fills the rectangle starting at (x, y) with the specified color (clamped at buffer edges).
+    pub fn clear_rect(&mut self, x: usize, y: usize, width: usize, height: usize, color: u32) {
+        for row in 0..height {
+            let py = y + row;
+            if py >= self.height {
+                break;
+            }
+            for col in 0..width {
+                let px = x + col;
+                if px >= self.width {
+                    break;
+                }
+                self.pixels[py * self.width + px] = color;
+            }
+        }
+    }
 }

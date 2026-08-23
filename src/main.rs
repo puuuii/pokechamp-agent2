@@ -13,6 +13,8 @@ use hardware::{AudioPipeline, HardwareProfile};
 use inference::{InferenceConfig, InferenceWorker, ModelInputResolution, PhaseRules, PhaseStatus};
 use video::{CaptureService, CropArea, DisplayWindow, VideoConfig};
 
+const PHASE_RULES_CONFIG_PATH: &str = "config/phase_rules.toml";
+
 fn main() -> Result<()> {
     let video_config = VideoConfig::default();
 
@@ -20,6 +22,14 @@ fn main() -> Result<()> {
 
     let capture_service = CaptureService::new(video_config, ML_SUBSAMPLING_INTERVAL_FRAMES);
     let (rx_display, rx_ml) = capture_service.spawn_loop()?;
+
+    let phase_rules = match PhaseRules::load(PHASE_RULES_CONFIG_PATH) {
+        Ok(rules) => rules,
+        Err(e) => {
+            eprintln!("[Phase] フェーズルールの設定を読み込めませんでした: {e}。組み込みデフォルトを使います。");
+            PhaseRules::default()
+        }
+    };
 
     let crop_area = Arc::new(RwLock::new(CropArea::default_relative()));
     let phase_status: PhaseStatus = Arc::new(RwLock::new(String::new()));
@@ -39,7 +49,7 @@ fn main() -> Result<()> {
         InferenceConfig {
             resolution: ModelInputResolution::STANDARD_1280X720,
         },
-        PhaseRules::default(),
+        phase_rules,
         Arc::clone(&crop_area),
         Arc::clone(&phase_status),
         Arc::clone(&manual_phase_advance),

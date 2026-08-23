@@ -1,8 +1,10 @@
+use serde::Deserialize;
+
 const MIN_RELATIVE_SIZE: f32 = 0.02; // 全体に対する最小サイズ比率
 
 /// 相対座標(0.0〜1.0)で表現するクロップ範囲。
 /// (0.0, 0.0) が画面左上、(1.0, 1.0) が右下に対応する。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct CropArea {
     pub x: f32,
     pub y: f32,
@@ -48,3 +50,4 @@ pub struct PixelCropArea {
     pub width: usize,
     pub height: usize,
 }
+

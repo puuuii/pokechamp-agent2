@@ -16,6 +16,9 @@ use crate::video::{CropArea, PixelCropArea};
 use super::preprocess::preprocess_white_text_extraction;
 use super::{InferenceConfig, ManualPhaseAdvance, PhaseRules, PhaseTarget};
 
+/// OCRで使う拡大率。テキスト認識の精度を上げるため3倍に拡大する。
+const OCR_UPSCALE_FACTOR: f32 = 3.0;
+
 /// ゲームのフェーズ。
 /// 「待機」と「対戦終了」は自動判定上は同一の監視状態だが、
 /// 表示テキスト(および手動進行のサイクル)で区別するため別状態として扱う。
@@ -41,12 +44,12 @@ impl Phase {
 }
 
 /// 各フェーズの表示テキスト。
-fn phase_display_text(phase_rules: &PhaseRules, phase: Phase) -> &'static str {
+fn phase_display_text(phase_rules: &PhaseRules, phase: Phase) -> &str {
     match phase {
-        Phase::Waiting => phase_rules.waiting_text,
-        Phase::Selecting => phase_rules.ribbon.enter_text,
-        Phase::Battling => phase_rules.battling_text,
-        Phase::Ended => phase_rules.ended.enter_text,
+        Phase::Waiting => phase_rules.waiting_text.as_str(),
+        Phase::Selecting => phase_rules.ribbon.enter_text.as_str(),
+        Phase::Battling => phase_rules.battling_text.as_str(),
+        Phase::Ended => phase_rules.ended.enter_text.as_str(),
     }
 }
 
@@ -71,7 +74,9 @@ pub fn run_ocr_loop(
 
     // 起動直後は必ず待機状態から始まる。
     let mut current_phase = Phase::Waiting;
-    set_phase_text(&phase_status, phase_rules.waiting_text);
+    set_phase_text(&phase_status, phase_rules.waiting_text.as_str());
+
+    let (model_w, model_h) = config.resolution.as_usize();
 
     for frame in rx_ml.iter() {
         // 表示側の▶ボタンからの手動進行リクエスト。
@@ -90,13 +95,10 @@ pub fn run_ocr_loop(
         last_ocr_time = Instant::now();
 
         // --- 既存: パーティ名などユーザー調整枠のOCR ---
-        let crop = crop_area.read().unwrap().to_pixels(
-            config.resolution.width as usize,
-            config.resolution.height as usize,
-        );
+        let crop = crop_area.read().unwrap().to_pixels(model_w, model_h);
 
         if let Some(normalized_text) =
-            recognize_text_in_crop(&ocr_engine, &frame, &config, crop, 3.0)?
+            recognize_text_in_crop(&ocr_engine, &frame, &config, crop, OCR_UPSCALE_FACTOR)?
         {
             println!("[OCR Normalized] {normalized_text}");
         }
@@ -113,7 +115,7 @@ pub fn run_ocr_loop(
                 // 対戦終了文字列が残っている間は、このフェーズに留まる
                 if ended_matched >= phase_rules.ended.threshold {
                     current_phase = Phase::Ended;
-                    set_phase_text(&phase_status, phase_rules.ended.enter_text);
+                    set_phase_text(&phase_status, phase_rules.ended.enter_text.as_str());
                     continue;
                 }
 
@@ -123,7 +125,7 @@ pub fn run_ocr_loop(
 
                 if ribbon_matched >= phase_rules.ribbon.threshold {
                     current_phase = Phase::Selecting;
-                    set_phase_text(&phase_status, phase_rules.ribbon.enter_text);
+                    set_phase_text(&phase_status, phase_rules.ribbon.enter_text.as_str());
                 }
             }
             Phase::Selecting => {
@@ -134,7 +136,7 @@ pub fn run_ocr_loop(
 
                 if ribbon_matched < phase_rules.ribbon.threshold {
                     current_phase = Phase::Battling;
-                    set_phase_text(&phase_status, phase_rules.battling_text);
+                    set_phase_text(&phase_status, phase_rules.battling_text.as_str());
                 }
             }
             Phase::Battling => {
@@ -144,7 +146,7 @@ pub fn run_ocr_loop(
 
                 if ended_matched >= phase_rules.ended.threshold {
                     current_phase = Phase::Ended;
-                    set_phase_text(&phase_status, phase_rules.ended.enter_text);
+                    set_phase_text(&phase_status, phase_rules.ended.enter_text.as_str());
                 }
             }
         }
@@ -167,16 +169,14 @@ fn ocr_target_match(
     config: &InferenceConfig,
     target: &PhaseTarget,
 ) -> anyhow::Result<usize> {
-    let crop = target.crop.to_pixels(
-        config.resolution.width as usize,
-        config.resolution.height as usize,
-    );
+    let (model_w, model_h) = config.resolution.as_usize();
+    let crop = target.crop.to_pixels(model_w, model_h);
 
-    let text = recognize_text_in_crop(ocr_engine, frame, config, crop, 3.0)?;
+    let text = recognize_text_in_crop(ocr_engine, frame, config, crop, OCR_UPSCALE_FACTOR)?;
 
     Ok(text
         .as_deref()
-        .map(count_matched_chars(target.target_chars))
+        .map(count_matched_chars(&target.target_chars))
         .unwrap_or(0))
 }
 
@@ -188,10 +188,11 @@ fn recognize_text_in_crop(
     crop: PixelCropArea,
     scale_factor: f32,
 ) -> anyhow::Result<Option<String>> {
+    let (model_w, model_h) = config.resolution.as_usize();
     let (rgba_bytes, scaled_w, scaled_h) = preprocess_white_text_extraction(
         frame,
-        config.resolution.width as usize,
-        config.resolution.height as usize,
+        model_w,
+        model_h,
         crop,
         scale_factor,
     );
@@ -217,11 +218,11 @@ fn recognize_text_in_crop(
 }
 
 /// target_chars のうち text に含まれる文字の種類数を返す(重複はカウントしない)。
-fn count_matched_chars(target_chars: &[char]) -> impl Fn(&str) -> usize + '_ {
+fn count_matched_chars(target_chars: &[String]) -> impl Fn(&str) -> usize + '_ {
     move |text: &str| {
         target_chars
             .iter()
-            .filter(|target_char| text.contains(**target_char))
+            .filter(|target_char| text.contains(target_char.as_str()))
             .count()
     }
 }
@@ -243,3 +244,4 @@ fn create_software_bitmap(
         BitmapAlphaMode::Ignore,
     )
 }
+

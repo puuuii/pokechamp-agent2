@@ -2,17 +2,12 @@ mod resample;
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::{
-    HeapRb,
-    traits::{Consumer, Producer, Split},
-};
+use ringbuf::{HeapRb, traits::{Consumer, Split}};
 use std::thread;
 
-use resample::{calculate_ring_buffer_capacity, linear_interpolate};
+use resample::{calculate_ring_buffer_capacity, LinearResampler, SILENCE_SAMPLE};
 
 use crate::hardware::{AudioPipeline, HardwareProfile};
-
-const SILENCE_SAMPLE: f32 = 0.0;
 
 pub struct CpalAudioPassthrough {
     target_device_keyword: String,
@@ -60,62 +55,13 @@ impl AudioPipeline for CpalAudioPassthrough {
         let (mut audio_producer, mut audio_consumer) = ring_buffer.split();
 
         let sample_rate_resample_ratio = out_sample_rate as f64 / in_sample_rate as f64;
-
-        let mut previous_block_last_frame = vec![SILENCE_SAMPLE; in_channels];
+        let mut resampler =
+            LinearResampler::new(in_channels, out_channels, sample_rate_resample_ratio);
 
         let input_stream = input_device.build_input_stream(
             &input_config.into(),
             move |raw_input_data: &[f32], _| {
-                if raw_input_data.is_empty() {
-                    return;
-                }
-
-                let input_frame_count = raw_input_data.len() / in_channels;
-                if input_frame_count == 0 {
-                    return;
-                }
-
-                let output_frame_count =
-                    ((input_frame_count as f64) * sample_rate_resample_ratio).round() as usize;
-
-                for output_index in 0..output_frame_count {
-                    let source_position = output_index as f64 / sample_rate_resample_ratio;
-                    let lower_frame_index = source_position.floor() as isize;
-                    let interpolation_fraction = (source_position - source_position.floor()) as f32;
-
-                    let start_frame: &[f32] = if lower_frame_index < 0 {
-                        &previous_block_last_frame
-                    } else {
-                        let start_idx = lower_frame_index as usize * in_channels;
-                        &raw_input_data[start_idx..start_idx + in_channels]
-                    };
-
-                    let end_frame: &[f32] = if (lower_frame_index + 1) as usize >= input_frame_count
-                    {
-                        let last_idx = (input_frame_count - 1) * in_channels;
-                        &raw_input_data[last_idx..last_idx + in_channels]
-                    } else {
-                        let end_idx = (lower_frame_index + 1) as usize * in_channels;
-                        &raw_input_data[end_idx..end_idx + in_channels]
-                    };
-
-                    for out_ch in 0..out_channels {
-                        let in_ch = if out_ch < in_channels { out_ch } else { 0 };
-
-                        let resampled_value = linear_interpolate(
-                            start_frame[in_ch],
-                            end_frame[in_ch],
-                            interpolation_fraction,
-                        );
-
-                        let _ = audio_producer.try_push(resampled_value);
-                    }
-                }
-
-                let last_frame_start = (input_frame_count - 1) * in_channels;
-                previous_block_last_frame.copy_from_slice(
-                    &raw_input_data[last_frame_start..last_frame_start + in_channels],
-                );
+                resampler.resample_into(raw_input_data, &mut audio_producer);
             },
             move |err| eprintln!("Audio input stream error: {err}"),
             None,
@@ -139,3 +85,4 @@ impl AudioPipeline for CpalAudioPassthrough {
         Ok(())
     }
 }
+

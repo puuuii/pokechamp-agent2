@@ -1,0 +1,21 @@
+# フェーズ遷移の判定ルール(OCR)。
+#
+# crop         : 判定領域の相対座標(0.0〜1.0)
+# target_chars : OCRテキストに含まれると判定する文字集合
+# threshold    : 判定成立に必要な文字の種類数
+# enter_text   : 判定成立時の表示文字列
+
+waiting_text = "フェーズ：待機"
+battling_text = "フェーズ：バトル"
+
+[ribbon]
+crop = { x = 0.3838, y = 0.0175, width = 0.2325, height = 0.0433 }
+target_chars = ["ラ", "ン", "ク", "バ", "ト", "ル", "シ", "グ"]
+threshold = 3
+enter_text = "フェーズ：選出"
+
+[ended]
+crop = { x = 0.1463, y = 0.8925, width = 0.7050, height = 0.0508 }
+target_chars = ["対", "戦", "を", "や", "め", "る", "チ", "ー", "ム", "編", "成", "す", "続", "け"]
+threshold = 5
+enter_text = "フェーズ：対戦終了"
