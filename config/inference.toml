@@ -1,0 +1,14 @@
+# 推論(OCR)用パラメータ。
+#
+# ocr_interval_secs    : フェーズ判定のOCR実行間隔(秒)
+# ocr_upscale_factor   : OCR用の拡大率(大きいほど認識精度は上がる)
+# white_text_threshold : 白文字抽出のしきい値(0-255)
+# resolution           : モデル入力解像度(幅x高さ)
+
+ocr_interval_secs = 3
+ocr_upscale_factor = 3.0
+white_text_threshold = 180
+
+[resolution]
+width = 1280
+height = 720

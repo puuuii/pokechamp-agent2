@@ -3,20 +3,31 @@ mod resample;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
+use tracing::{error, info};
 
 use resample::{calculate_ring_buffer_capacity, LinearResampler, SILENCE_SAMPLE};
 
 use crate::hardware::{AudioPipeline, HardwareProfile};
 
+/// シャットダウン信号のポーリング間隔。
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 pub struct CpalAudioPassthrough {
     target_device_keyword: String,
+    device_name: &'static str,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl CpalAudioPassthrough {
-    pub fn for_hardware(profile: &HardwareProfile) -> Self {
+    pub fn for_hardware(profile: &HardwareProfile, shutdown: Arc<AtomicBool>) -> Self {
         Self {
             target_device_keyword: profile.audio_device_keyword.to_lowercase(),
+            device_name: profile.name,
+            shutdown,
         }
     }
 
@@ -47,7 +58,7 @@ impl CpalAudioPassthrough {
                 resampler.resample_into(raw_input_data, &mut audio_producer);
                 resampler.report_dropped_samples_if_due();
             },
-            move |err| eprintln!("Audio input stream error: {err}"),
+            move |err| error!("Audio input stream error: {err}"),
             None,
         )?;
         Ok(stream)
@@ -66,7 +77,7 @@ impl CpalAudioPassthrough {
                     *destination_sample = audio_consumer.try_pop().unwrap_or(SILENCE_SAMPLE);
                 }
             },
-            move |err| eprintln!("Audio output stream error: {err}"),
+            move |err| error!("Audio output stream error: {err}"),
             None,
         )?;
         Ok(stream)
@@ -75,6 +86,7 @@ impl CpalAudioPassthrough {
 
 impl AudioPipeline for CpalAudioPassthrough {
     fn start(self) -> Result<()> {
+        info!(device = %self.device_name, "Starting audio pipeline");
         let host = cpal::default_host();
 
         let input_device = Self::find_input_device(&host, &self.target_device_keyword)?;
@@ -90,8 +102,8 @@ impl AudioPipeline for CpalAudioPassthrough {
         let out_channels = output_config.channels() as usize;
         let out_sample_rate = output_config.sample_rate().0;
 
-        println!("Audio Input: {in_channels} ch, {in_sample_rate} Hz");
-        println!("Audio Output: {out_channels} ch, {out_sample_rate} Hz");
+        info!("Audio Input: {in_channels} ch, {in_sample_rate} Hz");
+        info!("Audio Output: {out_channels} ch, {out_sample_rate} Hz");
 
         let buffer_capacity =
             calculate_ring_buffer_capacity(out_sample_rate, out_channels as u32);
@@ -110,7 +122,13 @@ impl AudioPipeline for CpalAudioPassthrough {
         input_stream.play()?;
         output_stream.play()?;
 
-        thread::park();
+        // シャットダウン信号を待つ。
+        // ストリームは関数返却時にローカルがdropされ停止する。
+        while !self.shutdown.load(Ordering::Relaxed) {
+            thread::sleep(SHUTDOWN_POLL_INTERVAL);
+        }
+        drop(input_stream);
+        drop(output_stream);
         Ok(())
     }
 }

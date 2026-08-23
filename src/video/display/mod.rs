@@ -9,18 +9,53 @@ use super::jp_text::JpTextRenderer;
 use super::{CropArea, PixelCropArea};
 use crate::hardware::FrameBuffer;
 use crate::inference::PhaseStatus;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossbeam_channel::Receiver;
 use minifb::{Window, WindowOptions};
+use serde::Deserialize;
+use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
+use tracing::warn;
 
 // --- UI余白パネル関連 -----------------------------------------------
-const LEFT_PANEL_WIDTH: usize = 200;
-const RIGHT_PANEL_WIDTH: usize = 200;
-const BOTTOM_PANEL_HEIGHT: usize = 100;
+/// 表示ウィンドウのレイアウトパラメータ。
+/// 通常は TOML ファイル(config/display.toml)から読み込む。
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct DisplayPanelConfig {
+    /// 左パネル幅(ピクセル)。
+    pub left_panel_width: usize,
+    /// 右パネル幅(ピクセル)。
+    pub right_panel_width: usize,
+    /// 下パネル高さ(ピクセル)。
+    pub bottom_panel_height: usize,
+    /// クロップ調整(矢印キー1押し)の相対ステップ。
+    pub crop_adjust_step: f32,
+}
+
+impl DisplayPanelConfig {
+    /// TOML ファイルから表示レイアウトパラメータを読み込む。
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("表示の設定ファイルが読めません: {path}"))?;
+        let config: DisplayPanelConfig = toml::from_str(&contents)
+            .with_context(|| format!("表示の設定ファイルの解析に失敗しました: {path}"))?;
+        Ok(config)
+    }
+}
+
+impl Default for DisplayPanelConfig {
+    fn default() -> Self {
+        Self {
+            left_panel_width: 200,
+            right_panel_width: 200,
+            bottom_panel_height: 100,
+            crop_adjust_step: 0.0025,
+        }
+    }
+}
 
 const PANEL_BACKGROUND_COLOR: u32 = 0x0020_2020;
 const PANEL_TEXT_COLOR: u32 = 0x00FF_FFFF;
@@ -32,8 +67,12 @@ const PHASE_TEXT_PIXEL_HEIGHT: f32 = 20.0;
 /// 静的パネルテキスト(プレースホルダー等)のピクセル高さ。
 const STATIC_TEXT_PIXEL_HEIGHT: f32 = 14.0;
 
+/// 静的パネルのプレースホルダーテキスト。
+const PANEL_PLACEHOLDER_TEXT: &str = "TEST TEXT";
+
 pub struct DisplayWindow {
     window: Window,
+    panel: DisplayPanelConfig,
     video_width: usize,
     video_height: usize,
     total_width: usize,
@@ -51,12 +90,13 @@ impl DisplayWindow {
     pub fn open_uncapped(
         title: &str,
         video_resolution: (usize, usize),
+        panel: DisplayPanelConfig,
         manual_phase_advance: &Arc<AtomicBool>,
     ) -> Result<Self> {
         let (video_width, video_height) = video_resolution;
 
-        let total_width = LEFT_PANEL_WIDTH + video_width + RIGHT_PANEL_WIDTH;
-        let total_height = video_height + BOTTOM_PANEL_HEIGHT;
+        let total_width = panel.left_panel_width + video_width + panel.right_panel_width;
+        let total_height = video_height + panel.bottom_panel_height;
 
         let mut window = Window::new(title, total_width, total_height, WindowOptions::default())?;
 
@@ -66,20 +106,21 @@ impl DisplayWindow {
         let jp_text_renderer = match JpTextRenderer::load_system_font() {
             Ok(renderer) => Some(renderer),
             Err(e) => {
-                eprintln!("[UI] 日本語フォント読み込み失敗。フェーズ表示は無効化: {e}");
+                warn!("日本語フォント読み込み失敗。フェーズ表示は無効化: {e}");
                 None
             }
         };
 
         let mut display = Self {
             window,
+            panel,
             video_width,
             video_height,
             total_width,
             total_height,
             current_frame: Arc::new(vec![0u32; video_width * video_height]),
             render_buffer: vec![0u32; total_width * total_height],
-            crop_input: CropInputController::new(),
+            crop_input: CropInputController::new(panel.crop_adjust_step),
             phase_button: PhaseButton::new(Arc::clone(manual_phase_advance)),
             jp_text_renderer,
             last_phase_text_size: (0, 0),
@@ -103,12 +144,13 @@ impl DisplayWindow {
         let mut buffer =
             PixelBuffer::new(&mut self.render_buffer, self.total_width, self.total_height);
 
-        let right_panel_x = LEFT_PANEL_WIDTH + self.video_width + 10;
+        // TODO: 右パネル・下パネルの実際の表示内容を決定し、このプレースホルダーを置き換える。
+        let right_panel_x = self.panel.left_panel_width + self.video_width + 10;
         renderer.draw(
             &mut buffer,
             right_panel_x,
             10,
-            "TEST TEXT",
+            PANEL_PLACEHOLDER_TEXT,
             PANEL_TEXT_COLOR,
             STATIC_TEXT_PIXEL_HEIGHT,
         );
@@ -118,7 +160,7 @@ impl DisplayWindow {
             &mut buffer,
             10,
             bottom_panel_y,
-            "TEST TEXT",
+            PANEL_PLACEHOLDER_TEXT,
             PANEL_TEXT_COLOR,
             STATIC_TEXT_PIXEL_HEIGHT,
         );
@@ -142,7 +184,7 @@ impl DisplayWindow {
             let src_start = row * self.video_width;
             let src_end = src_start + self.video_width;
 
-            let dst_start = row * self.total_width + LEFT_PANEL_WIDTH;
+            let dst_start = row * self.total_width + self.panel.left_panel_width;
             let dst_end = dst_start + self.video_width;
 
             self.render_buffer[dst_start..dst_end]
@@ -216,7 +258,7 @@ impl DisplayWindow {
                     .to_pixels(self.video_width, self.video_height);
                 let mut buffer =
                     PixelBuffer::new(&mut self.render_buffer, self.total_width, self.total_height);
-                draw_red_box(&mut buffer, LEFT_PANEL_WIDTH, 0, &crop);
+                draw_red_box(&mut buffer, self.panel.left_panel_width, 0, &crop);
             }
 
             self.window.update_with_buffer(
@@ -264,4 +306,3 @@ fn draw_red_box(buffer: &mut PixelBuffer, offset_x: usize, offset_y: usize, crop
         }
     }
 }
-

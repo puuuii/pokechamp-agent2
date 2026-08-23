@@ -5,6 +5,7 @@ use nokhwa::{
     utils::{CameraFormat, CameraIndex, RequestedFormat, RequestedFormatType, Resolution},
 };
 use std::sync::Arc;
+use tracing::info;
 
 use crate::hardware::{FrameBuffer, VideoSource};
 
@@ -39,7 +40,7 @@ impl NokhwaCapture {
 
         camera.open_stream()?;
         let actual_format = camera.camera_format();
-        println!("Camera opened. Actual format: {actual_format:?}");
+        info!("Camera opened. Actual format: {actual_format:?}");
 
         anyhow::ensure!(
             actual_format.format() == config.frame_format,

@@ -46,6 +46,7 @@ pub fn preprocess_white_text_extraction(
     full_height: usize,
     crop: PixelCropArea,
     scale_factor: f32,
+    white_threshold: u8,
 ) -> (Vec<u8>, usize, usize) {
     let scaled_w = ((crop.width as f32) * scale_factor) as usize;
     let scaled_h = ((crop.height as f32) * scale_factor) as usize;
@@ -65,8 +66,6 @@ pub fn preprocess_white_text_extraction(
         return (Vec::new(), 0, 0);
     }
 
-    const WHITE_THRESHOLD: u8 = 180;
-
     for sy in 0..scaled_h {
         let src_y = crop.y as f32 + (sy as f32 / scale_factor).min((crop_h - 1) as f32);
 
@@ -76,7 +75,7 @@ pub fn preprocess_white_text_extraction(
             let (r, g, b) = bilinear_sample(frame, full_width, full_height, src_x, src_y);
 
             let is_white_text_core =
-                r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
+                r >= white_threshold && g >= white_threshold && b >= white_threshold;
 
             let val = if is_white_text_core { 0u8 } else { 255u8 };
 

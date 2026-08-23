@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 pub type FrameBuffer = Arc<Vec<u32>>;
 
-#[allow(dead_code)]
 pub struct HardwareProfile {
     pub name: &'static str,
     pub audio_device_keyword: &'static str,

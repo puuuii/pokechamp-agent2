@@ -1,4 +1,6 @@
 #[cfg(windows)]
+mod phase_detector;
+#[cfg(windows)]
 mod preprocess;
 #[cfg(windows)]
 mod windows_ocr;
@@ -10,11 +12,12 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use tracing::error;
 
 use crate::hardware::FrameBuffer;
 use crate::video::CropArea;
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub struct ModelInputResolution {
     pub width: u32,
     pub height: u32,
@@ -27,15 +30,46 @@ impl ModelInputResolution {
     };
 
     /// (幅, 高さ) の usize 対として返す。
-    #[allow(dead_code)]
+    /// Windowsでのみ使う(OCR前処理)。
+    #[cfg(windows)]
     pub fn as_usize(&self) -> (usize, usize) {
         (self.width as usize, self.height as usize)
     }
 }
 
-#[allow(dead_code)]
+/// 推論(OCR)用パラメータ。
+/// 通常は TOML ファイル(config/inference.toml)から読み込む。
+#[derive(Debug, Clone, Deserialize)]
 pub struct InferenceConfig {
     pub resolution: ModelInputResolution,
+    /// フェーズ判定OCRの実行間隔(秒)。
+    pub ocr_interval_secs: u64,
+    /// OCR用の拡大率。
+    pub ocr_upscale_factor: f32,
+    /// 白文字抽出のしきい値(0-255)。
+    pub white_text_threshold: u8,
+}
+
+impl InferenceConfig {
+    /// TOML ファイルから推論パラメータを読み込む。
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("推論の設定ファイルが読めません: {path}"))?;
+        let config: InferenceConfig = toml::from_str(&contents)
+            .with_context(|| format!("推論の設定ファイルの解析に失敗しました: {path}"))?;
+        Ok(config)
+    }
+}
+
+impl Default for InferenceConfig {
+    fn default() -> Self {
+        Self {
+            resolution: ModelInputResolution::STANDARD_1280X720,
+            ocr_interval_secs: 3,
+            ocr_upscale_factor: 3.0,
+            white_text_threshold: 180,
+        }
+    }
 }
 
 /// フェーズ遷移の対象1組の判定パラメータ。
@@ -119,6 +153,9 @@ pub type ManualPhaseAdvance = Arc<AtomicBool>;
 pub struct InferenceWorker;
 
 impl InferenceWorker {
+    /// 推論スレッドを起動する。
+    ///
+    /// シャットダウン時にjoinするための `JoinHandle` を返す。
     pub fn spawn(
         rx_ml: Receiver<FrameBuffer>,
         config: InferenceConfig,
@@ -126,39 +163,84 @@ impl InferenceWorker {
         crop_area: Arc<RwLock<CropArea>>,
         phase_status: PhaseStatus,
         manual_phase_advance: ManualPhaseAdvance,
-    ) {
+        shutdown: Arc<AtomicBool>,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            #[cfg(windows)]
-            if let Err(e) = windows_ocr::run_ocr_loop(
+            if let Err(e) = run_inference_thread(
                 rx_ml,
                 config,
-                &phase_rules,
+                phase_rules,
                 crop_area,
                 phase_status,
                 manual_phase_advance,
+                shutdown,
             ) {
-                eprintln!("OCR Worker error: {e}");
+                error!("OCR Worker error: {e}");
             }
-
-            #[cfg(not(windows))]
-            {
-                let _ = phase_status;
-                let _ = phase_rules;
-                let _ = manual_phase_advance;
-                eprintln!("Windows.Media.Ocr is only supported on Windows.");
-            }
-        });
+        })
     }
+}
+
+/// 推論スレッド本体。
+/// WindowsではOCRループを実行し、他プラットフォームでは未実装。
+#[cfg(windows)]
+fn run_inference_thread(
+    rx_ml: Receiver<FrameBuffer>,
+    config: InferenceConfig,
+    phase_rules: PhaseRules,
+    crop_area: Arc<RwLock<CropArea>>,
+    phase_status: PhaseStatus,
+    manual_phase_advance: ManualPhaseAdvance,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    windows_ocr::run_ocr_loop(
+        rx_ml,
+        config,
+        phase_rules,
+        crop_area,
+        phase_status,
+        manual_phase_advance,
+        shutdown,
+    )
+}
+
+/// 非Windows版: OCRは未実装のため通知して即座に終了する。
+#[cfg(not(windows))]
+fn run_inference_thread(
+    rx_ml: Receiver<FrameBuffer>,
+    config: InferenceConfig,
+    phase_rules: PhaseRules,
+    crop_area: Arc<RwLock<CropArea>>,
+    phase_status: PhaseStatus,
+    manual_phase_advance: ManualPhaseAdvance,
+    shutdown: Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    let _ = (
+        rx_ml,
+        config,
+        phase_rules,
+        crop_area,
+        phase_status,
+        manual_phase_advance,
+        shutdown,
+    );
+    tracing::warn!("Windows.Media.Ocr is only supported on Windows.");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::PhaseRules;
 
+    /// `config/phase_rules.toml` のコンパイル時埋め込みコピー。
+    /// テスト実行時のカレントディレクトリに依存しない。
+    const EMBEDDED_PHASE_RULES_TOML: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/phase_rules.toml"));
+
     /// TOML 設定がパースでき、組み込みデフォルトと一致することを確認する。
     #[test]
     fn toml_config_parses_and_matches_default() {
-        let rules = PhaseRules::load("config/phase_rules.toml")
+        let rules: PhaseRules = toml::from_str(EMBEDDED_PHASE_RULES_TOML)
             .expect("config/phase_rules.toml must parse");
         let default = PhaseRules::default();
         assert_eq!(rules.ribbon.crop, default.ribbon.crop);

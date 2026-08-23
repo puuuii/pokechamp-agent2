@@ -2,6 +2,7 @@ use crate::video::buffer::PixelBuffer;
 use minifb::{MouseButton, MouseMode, Window};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tracing::info;
 
 const WIDTH: usize = 12;
 const HEIGHT: usize = 16;
@@ -54,7 +55,7 @@ impl PhaseButton {
         {
             self.pressed = true;
             self.manual_phase_advance.store(true, Ordering::Relaxed);
-            println!("[Phase] 手動フェーズ進行リクエスト");
+            info!("手動フェーズ進行リクエスト");
         }
     }
 

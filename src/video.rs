@@ -6,12 +6,10 @@ mod display;
 mod jp_text;
 mod pixel;
 mod pipeline;
-#[allow(unused_imports)]
-pub use capture::NokhwaCapture;
 pub use crop::{CropArea, PixelCropArea};
-pub use display::DisplayWindow;
-#[allow(unused_imports)]
-pub use pixel::{pack_rgb, unpack_rgb};
+pub use display::{DisplayPanelConfig, DisplayWindow};
+#[cfg(windows)]
+pub use pixel::unpack_rgb;
 pub use pipeline::CaptureService;
 
 use nokhwa::utils::FrameFormat;

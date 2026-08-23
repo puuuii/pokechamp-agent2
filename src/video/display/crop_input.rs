@@ -2,8 +2,7 @@ use crate::video::CropArea;
 use minifb::{Key, KeyRepeat, Window};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-const STEP: f32 = 0.0025; // 移動・リサイズの相対ステップ
+use tracing::debug;
 
 /// クロップ領域(赤枠)のキーボードコントローラ。
 ///
@@ -11,13 +10,16 @@ const STEP: f32 = 0.0025; // 移動・リサイズの相対ステップ
 pub struct CropInputController {
     last_input_time: Instant,
     show_debug_frame: bool,
+    /// 移動・リサイズの相対ステップ。
+    step: f32,
 }
 
 impl CropInputController {
-    pub fn new() -> Self {
+    pub fn new(step: f32) -> Self {
         Self {
             last_input_time: Instant::now(),
             show_debug_frame: cfg!(debug_assertions),
+            step,
         }
     }
 
@@ -25,7 +27,7 @@ impl CropInputController {
     pub fn handle(&mut self, window: &Window, crop_area: &Arc<RwLock<CropArea>>) {
         if cfg!(debug_assertions) && window.is_key_pressed(Key::D, KeyRepeat::No) {
             self.show_debug_frame = !self.show_debug_frame;
-            println!("[Debug Frame] Visibility: {}", self.show_debug_frame);
+            debug!("デバッグフレーム表示: {}", self.show_debug_frame);
             return;
         }
 
@@ -37,18 +39,18 @@ impl CropInputController {
         let shift =
             window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift);
 
-        if Self::process_directional_keys(window, &mut crop, shift) {
+        if self.process_directional_keys(window, &mut crop, shift) {
             crop.clamp();
             self.last_input_time = Instant::now();
-            println!(
-                "[Crop Box] x: {:.4}, y: {:.4}, w: {:.4}, h: {:.4}",
+            debug!(
+                "クロップ枠 x: {:.4}, y: {:.4}, w: {:.4}, h: {:.4}",
                 crop.x, crop.y, crop.width, crop.height
             );
         }
     }
 
     /// 矢印キーの移動(Shiftなし)/リサイズ(Shiftあり)を処理し、適用があればtrue。
-    fn process_directional_keys(window: &Window, crop: &mut CropArea, shift: bool) -> bool {
+    fn process_directional_keys(&self, window: &Window, crop: &mut CropArea, shift: bool) -> bool {
         // Shift中はリサイズ(width/height)、通常時は移動(x/y)。
         let (horizontal, vertical) = if shift {
             (&mut crop.width, &mut crop.height)
@@ -57,10 +59,10 @@ impl CropInputController {
         };
 
         let mut changed = false;
-        changed |= Self::adjust_field(window, horizontal, Key::Left, -STEP);
-        changed |= Self::adjust_field(window, horizontal, Key::Right, STEP);
-        changed |= Self::adjust_field(window, vertical, Key::Up, -STEP);
-        changed |= Self::adjust_field(window, vertical, Key::Down, STEP);
+        changed |= Self::adjust_field(window, horizontal, Key::Left, -self.step);
+        changed |= Self::adjust_field(window, horizontal, Key::Right, self.step);
+        changed |= Self::adjust_field(window, vertical, Key::Up, -self.step);
+        changed |= Self::adjust_field(window, vertical, Key::Down, self.step);
         changed
     }
 

@@ -1,8 +1,11 @@
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, bounded};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::Duration;
+use tracing::error;
 
 use crate::hardware::{FrameBuffer, VideoSource};
 
@@ -35,29 +38,32 @@ impl CaptureService {
         }
     }
 
-    pub fn spawn_loop(self) -> Result<(Receiver<FrameBuffer>, Receiver<FrameBuffer>)> {
+    pub fn spawn_loop(
+        self,
+        shutdown: Arc<AtomicBool>,
+    ) -> Result<(Receiver<FrameBuffer>, Receiver<FrameBuffer>, JoinHandle<()>)> {
         let (tx_display, rx_display) = bounded::<FrameBuffer>(SINGLE_SLOT_LATEST_FRAME_ONLY);
         let (tx_ml, rx_ml) = bounded::<FrameBuffer>(SINGLE_SLOT_LATEST_FRAME_ONLY);
 
         let rx_display_drain_handle = rx_display.clone();
         let rx_ml_drain_handle = rx_ml.clone();
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let mut camera_source = match NokhwaCapture::new(&self.config) {
                 Ok(source) => source,
                 Err(e) => {
-                    eprintln!("Failed to initialize camera: {e}");
+                    error!("Failed to initialize camera: {e}");
                     return;
                 }
             };
 
             let mut frames_since_last_ml_sample = 0u32;
 
-            loop {
+            while !shutdown.load(Ordering::Relaxed) {
                 let frame_buffer = match camera_source.capture_frame() {
                     Ok(buffer) => buffer,
                     Err(e) => {
-                        eprintln!("Capture frame error: {e}");
+                    error!("Capture frame error: {e}");
                         thread::sleep(Duration::from_millis(10));
                         continue;
                     }
@@ -81,6 +87,6 @@ impl CaptureService {
             }
         });
 
-        Ok((rx_display, rx_ml))
+        Ok((rx_display, rx_ml, handle))
     }
 }

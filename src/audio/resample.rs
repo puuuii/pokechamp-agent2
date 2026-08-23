@@ -1,5 +1,6 @@
 use ringbuf::{HeapProd, traits::Producer};
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 const TARGET_AUDIO_LATENCY: Duration = Duration::from_millis(50);
 const MILLISECONDS_PER_SECOND: u64 = 1000;
@@ -19,6 +20,15 @@ pub fn calculate_ring_buffer_capacity(sample_rate: u32, channel_count: u32) -> u
 #[inline(always)]
 pub fn linear_interpolate(start_sample: f32, end_sample: f32, interpolation_factor: f32) -> f32 {
     start_sample + (end_sample - start_sample) * interpolation_factor
+}
+
+/// 入力ブロックのidx番フレームのsliceを返す(0..frame_count-1にクランプ)。
+/// `frame_count` は 1 以上であること。
+#[inline(always)]
+fn frame_at(input: &[f32], idx: usize, frame_count: usize, channels: usize) -> &[f32] {
+    let idx = idx.min(frame_count - 1);
+    let start = idx * channels;
+    &input[start..start + channels]
 }
 
 /// 入力ストリームブロックをまたぐ線形リサンプリア。
@@ -70,17 +80,11 @@ impl LinearResampler {
             let start_frame: &[f32] = if lower_frame_index < 0 {
                 &self.previous_block_last_frame
             } else {
-                let start_idx = lower_frame_index as usize * self.in_channels;
-                &input[start_idx..start_idx + self.in_channels]
+                frame_at(input, lower_frame_index as usize, input_frame_count, self.in_channels)
             };
 
-            let end_frame: &[f32] = if (lower_frame_index + 1) as usize >= input_frame_count {
-                let last_idx = (input_frame_count - 1) * self.in_channels;
-                &input[last_idx..last_idx + self.in_channels]
-            } else {
-                let end_idx = (lower_frame_index + 1) as usize * self.in_channels;
-                &input[end_idx..end_idx + self.in_channels]
-            };
+            let end_frame: &[f32] =
+                frame_at(input, (lower_frame_index + 1) as usize, input_frame_count, self.in_channels);
 
             for out_ch in 0..self.out_channels {
                 let in_ch = if out_ch < self.in_channels { out_ch } else { 0 };
@@ -115,8 +119,8 @@ impl LinearResampler {
         let dropped = self.dropped_samples;
         self.dropped_samples = 0;
         self.last_drop_report = Instant::now();
-        eprintln!(
-            "[Audio] リンクバッファが埋まって {dropped} サンプルを破棄しました (TARGET_AUDIO_LATENCY = {:?})",
+        warn!(
+            "リンクバッファが埋まって {dropped} サンプルを破棄しました (TARGET_AUDIO_LATENCY = {:?})",
             TARGET_AUDIO_LATENCY
         );
     }
@@ -184,5 +188,16 @@ mod tests {
     fn empty_input_produces_nothing() {
         assert!(run(&[], 1, 1, 2.0).is_empty());
     }
-}
 
+    #[test]
+    fn frame_at_clamps_index_to_bounds() {
+        let input = [0.0, 1.0, 2.0, 3.0];
+        assert_eq!(frame_at(&input, 0, 2, 2)[0], 0.0);
+        assert_eq!(frame_at(&input, 0, 2, 2)[1], 1.0);
+        assert_eq!(frame_at(&input, 1, 2, 2)[0], 2.0);
+        assert_eq!(frame_at(&input, 1, 2, 2)[1], 3.0);
+        // 範囲外のindexは最終フレームにクランプされる。
+        assert_eq!(frame_at(&input, 99, 2, 2)[0], 2.0);
+        assert_eq!(frame_at(&input, 99, 2, 2)[1], 3.0);
+    }
+}
