@@ -3,6 +3,7 @@ mod resample;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
+use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -16,17 +17,40 @@ use crate::hardware::{AudioPipeline, HardwareProfile};
 /// シャットダウン信号のポーリング間隔。
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// 音声パススルーのパラメータ。
+/// 通常は TOML ファイル(config/audio.toml)から読み込む。
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct AudioConfig {
+    /// 目標の音声遅延(ミリ秒)。
+    /// リングバッファの容量はこの値から導出される。
+    pub target_latency_millis: u64,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            target_latency_millis: 50,
+        }
+    }
+}
+
 pub struct CpalAudioPassthrough {
     target_device_keyword: String,
     device_name: &'static str,
+    target_latency: Duration,
     shutdown: Arc<AtomicBool>,
 }
 
 impl CpalAudioPassthrough {
-    pub fn for_hardware(profile: &HardwareProfile, shutdown: Arc<AtomicBool>) -> Self {
+    pub fn for_hardware(
+        profile: &HardwareProfile,
+        config: AudioConfig,
+        shutdown: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             target_device_keyword: profile.audio_device_keyword.to_lowercase(),
             device_name: profile.name,
+            target_latency: Duration::from_millis(config.target_latency_millis),
             shutdown,
         }
     }
@@ -86,7 +110,11 @@ impl CpalAudioPassthrough {
 
 impl AudioPipeline for CpalAudioPassthrough {
     fn start(self) -> Result<()> {
-        info!(device = %self.device_name, "Starting audio pipeline");
+        info!(
+            device = %self.device_name,
+            target_latency = ?self.target_latency,
+            "Starting audio pipeline"
+        );
         let host = cpal::default_host();
 
         let input_device = Self::find_input_device(&host, &self.target_device_keyword)?;
@@ -106,7 +134,7 @@ impl AudioPipeline for CpalAudioPassthrough {
         info!("Audio Output: {out_channels} ch, {out_sample_rate} Hz");
 
         let buffer_capacity =
-            calculate_ring_buffer_capacity(out_sample_rate, out_channels as u32);
+            calculate_ring_buffer_capacity(out_sample_rate, out_channels as u32, self.target_latency);
         let ring_buffer = HeapRb::<f32>::new(buffer_capacity);
         let (audio_producer, audio_consumer) = ring_buffer.split();
 

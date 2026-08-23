@@ -1,9 +1,9 @@
 mod audio;
+mod config;
 mod hardware;
 mod inference;
 mod video;
 
-use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -11,14 +11,18 @@ use tracing::error;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-use audio::CpalAudioPassthrough;
+use audio::{AudioConfig, CpalAudioPassthrough};
 use hardware::{AudioPipeline, HardwareProfile};
 use inference::{InferenceConfig, InferenceWorker, PhaseRules, PhaseStatus};
-use video::{CaptureService, CropArea, DisplayPanelConfig, DisplayWindow, VideoConfig};
+use video::{CaptureService, CropArea, DisplayPanelConfig, DisplayWindow, NokhwaCapture};
 
 const PHASE_RULES_CONFIG_PATH: &str = "config/phase_rules.toml";
 const INFERENCE_CONFIG_PATH: &str = "config/inference.toml";
 const DISPLAY_CONFIG_PATH: &str = "config/display.toml";
+const AUDIO_CONFIG_PATH: &str = "config/audio.toml";
+
+/// ML用のサブサンプリング間隔(フレーム数)。
+const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30;
 
 /// ロギング初期化(RUST_LOG 環境変数、未設定時は info)。
 fn init_tracing() {
@@ -30,41 +34,29 @@ fn init_tracing() {
         .init();
 }
 
-fn main() -> Result<()> {
-    let video_config = VideoConfig::default();
-
-    const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30;
-
-    let capture_service = CaptureService::new(video_config, ML_SUBSAMPLING_INTERVAL_FRAMES);
+fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let phase_rules = match PhaseRules::load(PHASE_RULES_CONFIG_PATH) {
-        Ok(rules) => rules,
-        Err(e) => {
-            error!("フェーズルールの設定を読み込めませんでした: {e}。組み込みデフォルトを使います。");
-            PhaseRules::default()
-        }
-    };
-    let inference_config = match InferenceConfig::load(INFERENCE_CONFIG_PATH) {
-        Ok(config) => config,
-        Err(e) => {
-            error!("推論の設定を読み込めませんでした: {e}。組み込みデフォルトを使います。");
-            InferenceConfig::default()
-        }
-    };
-    let panel_config = match DisplayPanelConfig::load(DISPLAY_CONFIG_PATH) {
-        Ok(config) => config,
-        Err(e) => {
-            error!("表示の設定を読み込めませんでした: {e}。組み込みデフォルトを使います。");
-            DisplayPanelConfig::default()
-        }
-    };
+    let phase_rules = config::load_or_default::<PhaseRules>(PHASE_RULES_CONFIG_PATH, "フェーズルール");
+    let inference_config =
+        config::load_or_default::<InferenceConfig>(INFERENCE_CONFIG_PATH, "推論");
+    let panel_config =
+        config::load_or_default::<DisplayPanelConfig>(DISPLAY_CONFIG_PATH, "表示");
+    let audio_config = config::load_or_default::<AudioConfig>(AUDIO_CONFIG_PATH, "音声");
+
+    // キャプチャ機種の識別情報。機種追加は hardware.rs のプロファイルconst追加で対応する。
+    let profile = HardwareProfile::AVERMEDIA_LIVE_GAMER_MINI_GC311;
+
+    // 具体的な映像ソース(nokhwa)の生成は呼び出し側で行い、
+    // `CaptureService` には `Box<dyn VideoSource>` として注入する。
+    let video_source = NokhwaCapture::new(&profile.video, profile.video_device_keyword)?;
+    let capture_service =
+        CaptureService::new(Box::new(video_source), ML_SUBSAMPLING_INTERVAL_FRAMES);
 
     // 全体シャットダウンフラグ。表示ウィンドウクローズで立てる。
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    let (rx_display, rx_ml, capture_handle) =
-        capture_service.spawn_loop(Arc::clone(&shutdown))?;
+    let (rx_display, rx_ml, capture_handle) = capture_service.spawn_loop(Arc::clone(&shutdown));
 
     let crop_area = Arc::new(RwLock::new(CropArea::default_relative()));
     let phase_status: PhaseStatus = Arc::new(RwLock::new(String::new()));
@@ -73,10 +65,8 @@ fn main() -> Result<()> {
 
     let shutdown_audio = Arc::clone(&shutdown);
     let audio_handle = thread::spawn(move || {
-        let audio_pipeline = CpalAudioPassthrough::for_hardware(
-            &HardwareProfile::AVERMEDIA_LIVE_GAMER_MINI_GC311,
-            shutdown_audio,
-        );
+        let audio_pipeline =
+            CpalAudioPassthrough::for_hardware(&profile, audio_config, shutdown_audio);
         if let Err(e) = audio_pipeline.start() {
             error!("Audio pipeline error: {e}");
         }
@@ -92,7 +82,7 @@ fn main() -> Result<()> {
         Arc::clone(&shutdown),
     );
 
-    let display_resolution = video_config.resolution();
+    let display_resolution = profile.video.resolution();
     let mut window = DisplayWindow::open_uncapped(
         "Switch Capture",
         display_resolution,

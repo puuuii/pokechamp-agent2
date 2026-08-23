@@ -1,23 +1,20 @@
-#[cfg(windows)]
+mod analyzer;
 mod phase_detector;
-#[cfg(windows)]
 mod preprocess;
-#[cfg(windows)]
 mod windows_ocr;
 
-use anyhow::Context;
 use crossbeam_channel::Receiver;
 use serde::Deserialize;
-use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::Duration;
 use tracing::error;
 
 use crate::hardware::FrameBuffer;
 use crate::video::CropArea;
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct ModelInputResolution {
     pub width: u32,
     pub height: u32,
@@ -29,44 +26,49 @@ impl ModelInputResolution {
         height: 720,
     };
 
-    /// (幅, 高さ) の usize 対として返す。
-    /// Windowsでのみ使う(OCR前処理)。
-    #[cfg(windows)]
+    /// (幅, 高さ) の usize 対として返す(OCR前処理で使う)。
     pub fn as_usize(&self) -> (usize, usize) {
         (self.width as usize, self.height as usize)
     }
 }
 
-/// 推論(OCR)用パラメータ。
+/// 推論パラメータのconfig。
 /// 通常は TOML ファイル(config/inference.toml)から読み込む。
+///
+/// 分析器(analyzer)の種類ごとにパラメータを個別 struct に束ね、
+/// それを `InferenceConfig` のフィールドとして追加していく。
 #[derive(Debug, Clone, Deserialize)]
 pub struct InferenceConfig {
     pub resolution: ModelInputResolution,
-    /// フェーズ判定OCRの実行間隔(秒)。
-    pub ocr_interval_secs: u64,
-    /// OCR用の拡大率。
-    pub ocr_upscale_factor: f32,
-    /// 白文字抽出のしきい値(0-255)。
-    pub white_text_threshold: u8,
+    /// OCR(`PhaseDetector`)用パラメータ。
+    pub ocr: OcrConfig,
 }
 
-impl InferenceConfig {
-    /// TOML ファイルから推論パラメータを読み込む。
-    pub fn load(path: &str) -> anyhow::Result<Self> {
-        let contents = fs::read_to_string(path)
-            .with_context(|| format!("推論の設定ファイルが読めません: {path}"))?;
-        let config: InferenceConfig = toml::from_str(&contents)
-            .with_context(|| format!("推論の設定ファイルの解析に失敗しました: {path}"))?;
-        Ok(config)
-    }
+/// OCR(`PhaseDetector`)用パラメータ。
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct OcrConfig {
+    /// フェーズ判定OCRの実行間隔(秒)。
+    pub interval_secs: u64,
+    /// OCR用の拡大率。
+    pub upscale_factor: f32,
+    /// 白文字抽出のしきい値(0-255)。
+    pub white_text_threshold: u8,
 }
 
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
             resolution: ModelInputResolution::STANDARD_1280X720,
-            ocr_interval_secs: 3,
-            ocr_upscale_factor: 3.0,
+            ocr: OcrConfig::default(),
+        }
+    }
+}
+
+impl Default for OcrConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: 3,
+            upscale_factor: 3.0,
             white_text_threshold: 180,
         }
     }
@@ -92,17 +94,6 @@ pub struct PhaseRules {
     pub ended: PhaseTarget,
     pub waiting_text: String,
     pub battling_text: String,
-}
-
-impl PhaseRules {
-    /// TOML ファイルからフェーズルールを読み込む。
-    pub fn load(path: &str) -> anyhow::Result<Self> {
-        let contents = fs::read_to_string(path)
-            .with_context(|| format!("フェーズルールの設定ファイルが読めません: {path}"))?;
-        let rules: PhaseRules = toml::from_str(&contents)
-            .with_context(|| format!("フェーズルールの設定ファイルの解析に失敗しました: {path}"))?;
-        Ok(rules)
-    }
 }
 
 /// 組み込みデフォルト。TOML 設定が読めないときのフォールバック用。
@@ -182,8 +173,9 @@ impl InferenceWorker {
 }
 
 /// 推論スレッド本体。
-/// WindowsではOCRループを実行し、他プラットフォームでは未実装。
-#[cfg(windows)]
+///
+/// OCR分析器を構築し、ループ制御は汎用分析ループに委譲する。
+/// 新しい分析器(ML等)を追加するときは、こちらの構築部分だけを差し替える。
 fn run_inference_thread(
     rx_ml: Receiver<FrameBuffer>,
     config: InferenceConfig,
@@ -193,10 +185,12 @@ fn run_inference_thread(
     manual_phase_advance: ManualPhaseAdvance,
     shutdown: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    windows_ocr::run_ocr_loop(
+    let detector = phase_detector::PhaseDetector::new(phase_rules, &config)?;
+
+    windows_ocr::run_analysis_loop(
         rx_ml,
-        config,
-        phase_rules,
+        Duration::from_secs(config.ocr.interval_secs),
+        detector,
         crop_area,
         phase_status,
         manual_phase_advance,
@@ -204,38 +198,18 @@ fn run_inference_thread(
     )
 }
 
-/// 非Windows版: OCRは未実装のため通知して即座に終了する。
-#[cfg(not(windows))]
-fn run_inference_thread(
-    rx_ml: Receiver<FrameBuffer>,
-    config: InferenceConfig,
-    phase_rules: PhaseRules,
-    crop_area: Arc<RwLock<CropArea>>,
-    phase_status: PhaseStatus,
-    manual_phase_advance: ManualPhaseAdvance,
-    shutdown: Arc<AtomicBool>,
-) -> anyhow::Result<()> {
-    let _ = (
-        rx_ml,
-        config,
-        phase_rules,
-        crop_area,
-        phase_status,
-        manual_phase_advance,
-        shutdown,
-    );
-    tracing::warn!("Windows.Media.Ocr is only supported on Windows.");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::PhaseRules;
+    use super::{InferenceConfig, PhaseRules};
 
     /// `config/phase_rules.toml` のコンパイル時埋め込みコピー。
     /// テスト実行時のカレントディレクトリに依存しない。
     const EMBEDDED_PHASE_RULES_TOML: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/phase_rules.toml"));
+
+    /// `config/inference.toml` のコンパイル時埋め込みコピー。
+    const EMBEDDED_INFERENCE_TOML: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/inference.toml"));
 
     /// TOML 設定がパースでき、組み込みデフォルトと一致することを確認する。
     #[test]
@@ -253,5 +227,15 @@ mod tests {
         assert_eq!(rules.ended.enter_text, default.ended.enter_text);
         assert_eq!(rules.waiting_text, default.waiting_text);
         assert_eq!(rules.battling_text, default.battling_text);
+    }
+
+    /// 推論TOML(`[ocr]`テーブル含む)がパースでき、組み込みデフォルトと一致することを確認する。
+    #[test]
+    fn inference_toml_parses_and_matches_default() {
+        let config: InferenceConfig = toml::from_str(EMBEDDED_INFERENCE_TOML)
+            .expect("config/inference.toml must parse");
+        let default = InferenceConfig::default();
+        assert_eq!(config.resolution, default.resolution);
+        assert_eq!(config.ocr, default.ocr);
     }
 }

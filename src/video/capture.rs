@@ -1,15 +1,17 @@
 use anyhow::Result;
 use nokhwa::{
+    query,
     Camera,
     pixel_format::RgbFormat,
-    utils::{CameraFormat, CameraIndex, RequestedFormat, RequestedFormatType, Resolution},
+    utils::{
+        ApiBackend, CameraFormat, CameraIndex, RequestedFormat, RequestedFormatType, Resolution,
+    },
 };
 use std::sync::Arc;
 use tracing::info;
 
-use crate::hardware::{FrameBuffer, VideoSource};
+use crate::hardware::{FrameBuffer, VideoSpec, VideoSource};
 
-use super::VideoConfig;
 use super::colorspace::decode_yuyv_to_packed_rgb_parallel;
 
 pub struct NokhwaCapture {
@@ -19,31 +21,31 @@ pub struct NokhwaCapture {
 }
 
 impl NokhwaCapture {
-    pub fn new(config: &VideoConfig) -> Result<Self> {
+    pub fn new(video: &VideoSpec, device_keyword: &str) -> Result<Self> {
         let desired_format = CameraFormat::new(
-            Resolution::new(config.width, config.height),
-            config.frame_format,
-            config.fps,
+            Resolution::new(video.width, video.height),
+            video.frame_format,
+            video.fps,
         );
 
         let requested_format =
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(desired_format));
 
-        let mut camera = Camera::new(CameraIndex::Index(config.camera_index), requested_format)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to open camera index {} with format {:?}: {e}.",
-                    config.camera_index,
-                    desired_format
-                )
-            })?;
+        let device_index = Self::find_device_index(device_keyword)?;
+
+        let mut camera = Camera::new(device_index, requested_format).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to open video device with format {:?}: {e}.",
+                desired_format
+            )
+        })?;
 
         camera.open_stream()?;
         let actual_format = camera.camera_format();
         info!("Camera opened. Actual format: {actual_format:?}");
 
         anyhow::ensure!(
-            actual_format.format() == config.frame_format,
+            actual_format.format() == video.frame_format,
             "Direct YUYV decode requires FrameFormat::YUYV, but got {:?}.",
             actual_format.format()
         );
@@ -58,6 +60,28 @@ impl NokhwaCapture {
             width,
             height,
         })
+    }
+
+    /// デバイス列挙し、デバイス名(部分一致)で対象映像デバイスを特定する。
+    ///
+    /// 名前マッチとすることで、他デバイスの挿入でデバイスindexがずれ込んでも安定する。
+    fn find_device_index(keyword: &str) -> Result<CameraIndex> {
+        let devices = query(ApiBackend::Auto).map_err(|e| {
+            anyhow::anyhow!("Failed to enumerate video devices: {e}")
+        })?;
+
+        let keyword = keyword.to_lowercase();
+        let Some(wanted) = devices
+            .iter()
+            .find(|device| device.human_name().to_lowercase().contains(&keyword))
+        else {
+            let available: Vec<String> = devices.iter().map(|device| device.human_name()).collect();
+            anyhow::bail!(
+                "No video device matching \"{keyword}\" was found. Available devices: {available:?}"
+            );
+        };
+
+        Ok(wanted.index().clone())
     }
 }
 

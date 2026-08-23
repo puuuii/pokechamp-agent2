@@ -2,7 +2,6 @@ use ringbuf::{HeapProd, traits::Producer};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-const TARGET_AUDIO_LATENCY: Duration = Duration::from_millis(50);
 const MILLISECONDS_PER_SECOND: u64 = 1000;
 
 /// ドロップ警告ログの間隔。
@@ -10,9 +9,14 @@ const DROPPED_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(1);
 
 pub const SILENCE_SAMPLE: f32 = 0.0;
 
-pub fn calculate_ring_buffer_capacity(sample_rate: u32, channel_count: u32) -> usize {
+/// 目標の音声遅延からリングバッファの容量を算出する。
+pub fn calculate_ring_buffer_capacity(
+    sample_rate: u32,
+    channel_count: u32,
+    target_latency: Duration,
+) -> usize {
     let samples_per_second_all_channels = (sample_rate * channel_count) as u64;
-    let latency_ms = TARGET_AUDIO_LATENCY.as_millis() as u64;
+    let latency_ms = target_latency.as_millis() as u64;
 
     ((samples_per_second_all_channels * latency_ms) / MILLISECONDS_PER_SECOND) as usize
 }
@@ -119,10 +123,7 @@ impl LinearResampler {
         let dropped = self.dropped_samples;
         self.dropped_samples = 0;
         self.last_drop_report = Instant::now();
-        warn!(
-            "リンクバッファが埋まって {dropped} サンプルを破棄しました (TARGET_AUDIO_LATENCY = {:?})",
-            TARGET_AUDIO_LATENCY
-        );
+        warn!("リンクバッファが埋まって {dropped} サンプルを破棄しました");
     }
 }
 

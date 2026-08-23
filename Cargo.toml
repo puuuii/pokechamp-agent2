@@ -5,7 +5,7 @@ edition = "2024"
 default-run = "pokechamp-agent2"
 
 [dependencies]
-nokhwa = { version = "0.10", features = ["input-native"] }
+nokhwa = { version = "0.10", features = ["input-native", "camera-sync-impl"] }
 minifb = "0.27"
 anyhow = "1"
 crossbeam-channel = "0.5"

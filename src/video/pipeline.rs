@@ -1,4 +1,3 @@
-use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,9 +7,6 @@ use std::time::Duration;
 use tracing::error;
 
 use crate::hardware::{FrameBuffer, VideoSource};
-
-use super::VideoConfig;
-use super::capture::NokhwaCapture;
 
 const SINGLE_SLOT_LATEST_FRAME_ONLY: usize = 1;
 
@@ -25,23 +21,33 @@ fn publish_latest_frame_dropping_lagging(
     }
 }
 
+/// キャプチャサービス。
+///
+/// 具体的な `VideoSource`(例: `NokhwaCapture`)は呼び出し側が注入するため、
+/// キャプチャ手段の追加は新しい `VideoSource` 実装の追加だけで対応できる。
 pub struct CaptureService {
-    config: VideoConfig,
+    source: Box<dyn VideoSource>,
     ml_sample_interval_frames: u32,
 }
 
 impl CaptureService {
-    pub fn new(config: VideoConfig, ml_sample_interval_frames: u32) -> Self {
+    pub fn new(source: Box<dyn VideoSource>, ml_sample_interval_frames: u32) -> Self {
         Self {
-            config,
+            source,
             ml_sample_interval_frames: ml_sample_interval_frames.max(1),
         }
     }
 
+    /// キャプチャスレッドを起動する。
+    ///
+    /// 設計メモ: 映像パス(1スロットch、最新フレーム優先)と音声パス(リングバッファ)は
+    /// 共有クロックを持たない(独立したタイムスタンプソースがない)。
+    /// 今のパススルー用途では問題にならないが、将来ML検出結果と音声イベントを
+    /// 突き合わせるときは、共有クロック(例: 取得時の `Instant` 刻印)を先に要る。
     pub fn spawn_loop(
         self,
         shutdown: Arc<AtomicBool>,
-    ) -> Result<(Receiver<FrameBuffer>, Receiver<FrameBuffer>, JoinHandle<()>)> {
+    ) -> (Receiver<FrameBuffer>, Receiver<FrameBuffer>, JoinHandle<()>) {
         let (tx_display, rx_display) = bounded::<FrameBuffer>(SINGLE_SLOT_LATEST_FRAME_ONLY);
         let (tx_ml, rx_ml) = bounded::<FrameBuffer>(SINGLE_SLOT_LATEST_FRAME_ONLY);
 
@@ -49,21 +55,15 @@ impl CaptureService {
         let rx_ml_drain_handle = rx_ml.clone();
 
         let handle = thread::spawn(move || {
-            let mut camera_source = match NokhwaCapture::new(&self.config) {
-                Ok(source) => source,
-                Err(e) => {
-                    error!("Failed to initialize camera: {e}");
-                    return;
-                }
-            };
+            let mut source = self.source;
 
             let mut frames_since_last_ml_sample = 0u32;
 
             while !shutdown.load(Ordering::Relaxed) {
-                let frame_buffer = match camera_source.capture_frame() {
+                let frame_buffer = match source.capture_frame() {
                     Ok(buffer) => buffer,
                     Err(e) => {
-                    error!("Capture frame error: {e}");
+                        error!("Capture frame error: {e}");
                         thread::sleep(Duration::from_millis(10));
                         continue;
                     }
@@ -87,6 +87,6 @@ impl CaptureService {
             }
         });
 
-        Ok((rx_display, rx_ml, handle))
+        (rx_display, rx_ml, handle)
     }
 }

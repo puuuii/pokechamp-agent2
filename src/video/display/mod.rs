@@ -9,11 +9,10 @@ use super::jp_text::JpTextRenderer;
 use super::{CropArea, PixelCropArea};
 use crate::hardware::FrameBuffer;
 use crate::inference::PhaseStatus;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossbeam_channel::Receiver;
 use minifb::{Window, WindowOptions};
 use serde::Deserialize;
-use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -33,17 +32,6 @@ pub struct DisplayPanelConfig {
     pub bottom_panel_height: usize,
     /// クロップ調整(矢印キー1押し)の相対ステップ。
     pub crop_adjust_step: f32,
-}
-
-impl DisplayPanelConfig {
-    /// TOML ファイルから表示レイアウトパラメータを読み込む。
-    pub fn load(path: &str) -> anyhow::Result<Self> {
-        let contents = fs::read_to_string(path)
-            .with_context(|| format!("表示の設定ファイルが読めません: {path}"))?;
-        let config: DisplayPanelConfig = toml::from_str(&contents)
-            .with_context(|| format!("表示の設定ファイルの解析に失敗しました: {path}"))?;
-        Ok(config)
-    }
 }
 
 impl Default for DisplayPanelConfig {
