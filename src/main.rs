@@ -65,7 +65,10 @@ fn main() -> Result<()> {
     println!("========================================================\n");
 
     while window.is_open() {
-        window.render_latest(&rx_display, &crop_area, &phase_status)?;
+        if let Err(e) = window.render_latest(&rx_display, &crop_area, &phase_status) {
+            eprintln!("[Display] render error: {e}");
+            continue;
+        }
     }
 
     Ok(())

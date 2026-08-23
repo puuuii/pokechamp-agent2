@@ -37,51 +37,40 @@ impl CropInputController {
         let shift =
             window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift);
 
-        let mut changed = false;
-
-        if shift {
-            if window.is_key_down(Key::Left) {
-                crop.width -= STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Right) {
-                crop.width += STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Up) {
-                crop.height -= STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Down) {
-                crop.height += STEP;
-                changed = true;
-            }
-        } else {
-            if window.is_key_down(Key::Left) {
-                crop.x -= STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Right) {
-                crop.x += STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Up) {
-                crop.y -= STEP;
-                changed = true;
-            }
-            if window.is_key_down(Key::Down) {
-                crop.y += STEP;
-                changed = true;
-            }
-        }
-
-        if changed {
+        if Self::process_directional_keys(window, &mut crop, shift) {
             crop.clamp();
             self.last_input_time = Instant::now();
             println!(
                 "[Crop Box] x: {:.4}, y: {:.4}, w: {:.4}, h: {:.4}",
                 crop.x, crop.y, crop.width, crop.height
             );
+        }
+    }
+
+    /// 矢印キーの移動(Shiftなし)/リサイズ(Shiftあり)を処理し、適用があればtrue。
+    fn process_directional_keys(window: &Window, crop: &mut CropArea, shift: bool) -> bool {
+        // Shift中はリサイズ(width/height)、通常時は移動(x/y)。
+        let (horizontal, vertical) = if shift {
+            (&mut crop.width, &mut crop.height)
+        } else {
+            (&mut crop.x, &mut crop.y)
+        };
+
+        let mut changed = false;
+        changed |= Self::adjust_field(window, horizontal, Key::Left, -STEP);
+        changed |= Self::adjust_field(window, horizontal, Key::Right, STEP);
+        changed |= Self::adjust_field(window, vertical, Key::Up, -STEP);
+        changed |= Self::adjust_field(window, vertical, Key::Down, STEP);
+        changed
+    }
+
+    /// keyが押されているならfieldにdeltaを適用してtrueを返す。
+    fn adjust_field(window: &Window, field: &mut f32, key: Key, delta: f32) -> bool {
+        if window.is_key_down(key) {
+            *field += delta;
+            true
+        } else {
+            false
         }
     }
 

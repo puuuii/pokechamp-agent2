@@ -1,4 +1,4 @@
-use crate::video::PixelCropArea;
+use crate::video::{PixelCropArea, unpack_rgb};
 #[inline(always)]
 fn bilinear_sample(frame: &[u32], full_w: usize, full_h: usize, x: f32, y: f32) -> (u8, u8, u8) {
     let x0 = (x.floor() as usize).min(full_w - 1);
@@ -15,11 +15,8 @@ fn bilinear_sample(frame: &[u32], full_w: usize, full_h: usize, x: f32, y: f32) 
     let p11 = frame[y1 * full_w + x1];
 
     let unpack = |p: u32| {
-        (
-            ((p >> 16) & 0xFF) as f32,
-            ((p >> 8) & 0xFF) as f32,
-            (p & 0xFF) as f32,
-        )
+        let (r, g, b) = unpack_rgb(p);
+        (r as f32, g as f32, b as f32)
     };
 
     let (r00, g00, b00) = unpack(p00);

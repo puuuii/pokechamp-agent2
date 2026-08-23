@@ -1,4 +1,5 @@
 use super::buffer::PixelBuffer;
+use super::pixel::{pack_rgb, unpack_rgb};
 use anyhow::Result;
 use rusttype::{Font, Scale, point};
 
@@ -87,17 +88,12 @@ impl JpTextRenderer {
 
 fn blend(bg: u32, fg: u32, alpha: f32) -> u32 {
     let alpha = alpha.clamp(0.0, 1.0);
-    let bg_r = ((bg >> 16) & 0xFF) as f32;
-    let bg_g = ((bg >> 8) & 0xFF) as f32;
-    let bg_b = (bg & 0xFF) as f32;
+    let (bg_r, bg_g, bg_b) = unpack_rgb(bg);
+    let (fg_r, fg_g, fg_b) = unpack_rgb(fg);
 
-    let fg_r = ((fg >> 16) & 0xFF) as f32;
-    let fg_g = ((fg >> 8) & 0xFF) as f32;
-    let fg_b = (fg & 0xFF) as f32;
+    let r = (fg_r as f32 * alpha + bg_r as f32 * (1.0 - alpha)) as u8;
+    let g = (fg_g as f32 * alpha + bg_g as f32 * (1.0 - alpha)) as u8;
+    let b = (fg_b as f32 * alpha + bg_b as f32 * (1.0 - alpha)) as u8;
 
-    let r = (fg_r * alpha + bg_r * (1.0 - alpha)) as u32;
-    let g = (fg_g * alpha + bg_g * (1.0 - alpha)) as u32;
-    let b = (fg_b * alpha + bg_b * (1.0 - alpha)) as u32;
-
-    (r << 16) | (g << 8) | b
+    pack_rgb(r, g, b)
 }

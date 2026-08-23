@@ -1,24 +1,22 @@
 use rayon::prelude::*;
 
-pub struct Bt601ColorSpace;
+use super::pixel::pack_rgb;
 
-impl Bt601ColorSpace {
-    const LUMA_STUDIO_MIN_OFFSET: i32 = 16;
-    const CHROMA_CENTER_OFFSET: i32 = 128;
+const LUMA_STUDIO_MIN_OFFSET: i32 = 16;
+const CHROMA_CENTER_OFFSET: i32 = 128;
 
-    #[inline(always)]
-    fn yuv_to_packed_rgb(luma: i32, chroma_u: i32, chroma_v: i32) -> u32 {
-        let normalized_luma = luma - Self::LUMA_STUDIO_MIN_OFFSET;
-        let normalized_u = chroma_u - Self::CHROMA_CENTER_OFFSET;
-        let normalized_v = chroma_v - Self::CHROMA_CENTER_OFFSET;
+#[inline(always)]
+pub fn yuv_to_packed_rgb(luma: i32, chroma_u: i32, chroma_v: i32) -> u32 {
+    let normalized_luma = luma - LUMA_STUDIO_MIN_OFFSET;
+    let normalized_u = chroma_u - CHROMA_CENTER_OFFSET;
+    let normalized_v = chroma_v - CHROMA_CENTER_OFFSET;
 
-        let red = ((298 * normalized_luma + 409 * normalized_v + 128) >> 8).clamp(0, 255) as u32;
-        let green = ((298 * normalized_luma - 100 * normalized_u - 208 * normalized_v + 128) >> 8)
-            .clamp(0, 255) as u32;
-        let blue = ((298 * normalized_luma + 516 * normalized_u + 128) >> 8).clamp(0, 255) as u32;
+    let red = ((298 * normalized_luma + 409 * normalized_v + 128) >> 8).clamp(0, 255) as u8;
+    let green = ((298 * normalized_luma - 100 * normalized_u - 208 * normalized_v + 128) >> 8)
+        .clamp(0, 255) as u8;
+    let blue = ((298 * normalized_luma + 516 * normalized_u + 128) >> 8).clamp(0, 255) as u8;
 
-        (red << 16) | (green << 8) | blue
-    }
+    pack_rgb(red, green, blue)
 }
 
 pub fn decode_yuyv_to_packed_rgb_parallel(
@@ -41,8 +39,8 @@ pub fn decode_yuyv_to_packed_rgb_parallel(
                 let luma_1 = yuyv_quad[2] as i32;
                 let chroma_v = yuyv_quad[3] as i32;
 
-                pixel_pair[0] = Bt601ColorSpace::yuv_to_packed_rgb(luma_0, chroma_u, chroma_v);
-                pixel_pair[1] = Bt601ColorSpace::yuv_to_packed_rgb(luma_1, chroma_u, chroma_v);
+                pixel_pair[0] = yuv_to_packed_rgb(luma_0, chroma_u, chroma_v);
+                pixel_pair[1] = yuv_to_packed_rgb(luma_1, chroma_u, chroma_v);
             }
         });
 }

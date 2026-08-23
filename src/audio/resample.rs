@@ -1,8 +1,11 @@
 use ringbuf::{HeapProd, traits::Producer};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const TARGET_AUDIO_LATENCY: Duration = Duration::from_millis(50);
 const MILLISECONDS_PER_SECOND: u64 = 1000;
+
+/// ドロップ警告ログの間隔。
+const DROPPED_SAMPLE_WARN_INTERVAL: Duration = Duration::from_secs(1);
 
 pub const SILENCE_SAMPLE: f32 = 0.0;
 
@@ -28,6 +31,10 @@ pub struct LinearResampler {
     in_channels: usize,
     out_channels: usize,
     previous_block_last_frame: Vec<f32>,
+    /// リンクバッファ溢れで破棄したサンプル数。
+    dropped_samples: u64,
+    /// 直前のドロップ警告ログの発行時刻。
+    last_drop_report: Instant,
 }
 
 impl LinearResampler {
@@ -38,6 +45,8 @@ impl LinearResampler {
             in_channels,
             out_channels,
             previous_block_last_frame: vec![SILENCE_SAMPLE; in_channels],
+            dropped_samples: 0,
+            last_drop_report: Instant::now(),
         }
     }
 
@@ -82,13 +91,33 @@ impl LinearResampler {
                     interpolation_fraction,
                 );
 
-                let _ = producer.try_push(resampled_value);
+                if producer.try_push(resampled_value).is_err() {
+                    self.dropped_samples += 1;
+                }
             }
         }
 
         let last_frame_start = (input_frame_count - 1) * self.in_channels;
         self.previous_block_last_frame.copy_from_slice(
             &input[last_frame_start..last_frame_start + self.in_channels],
+        );
+    }
+
+    /// 破棄が起きている場合、1秒に1回まで警告ログを出力する。
+    ///
+    /// 報告後はカウンタをリセットするため、ログは直前報告以降の破棄数を表す。
+    pub fn report_dropped_samples_if_due(&mut self) {
+        if self.dropped_samples == 0
+            || self.last_drop_report.elapsed() < DROPPED_SAMPLE_WARN_INTERVAL
+        {
+            return;
+        }
+        let dropped = self.dropped_samples;
+        self.dropped_samples = 0;
+        self.last_drop_report = Instant::now();
+        eprintln!(
+            "[Audio] リンクバッファが埋まって {dropped} サンプルを破棄しました (TARGET_AUDIO_LATENCY = {:?})",
+            TARGET_AUDIO_LATENCY
         );
     }
 }

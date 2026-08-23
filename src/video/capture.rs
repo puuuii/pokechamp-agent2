@@ -60,17 +60,13 @@ impl NokhwaCapture {
     }
 }
 
-fn create_zeroed_pixel_buffer(pixel_count: usize) -> Vec<u32> {
-    vec![0u32; pixel_count]
-}
-
 impl VideoSource for NokhwaCapture {
     fn capture_frame(&mut self) -> Result<FrameBuffer> {
         let frame = self.camera.frame()?;
         let raw_yuyv_bytes = frame.buffer();
 
         let total_pixel_count = self.width * self.height;
-        let mut rgb_pixels = create_zeroed_pixel_buffer(total_pixel_count);
+        let mut rgb_pixels = vec![0u32; total_pixel_count];
 
         decode_yuyv_to_packed_rgb_parallel(raw_yuyv_bytes, &mut rgb_pixels, self.width);
 
