@@ -36,8 +36,7 @@ impl CropInputController {
         }
 
         let mut crop = crop_area.write().unwrap();
-        let shift =
-            window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift);
+        let shift = window.is_key_down(Key::LeftShift) || window.is_key_down(Key::RightShift);
 
         if self.process_directional_keys(window, &mut crop, shift) {
             crop.clamp();

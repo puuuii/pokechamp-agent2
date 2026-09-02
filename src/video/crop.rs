@@ -50,4 +50,3 @@ pub struct PixelCropArea {
     pub width: usize,
     pub height: usize,
 }
-

@@ -121,7 +121,8 @@ impl Default for PhaseRules {
                     height: 0.0508,
                 },
                 target_chars: [
-                    "対", "戦", "を", "や", "め", "る", "チ", "ー", "ム", "編", "成", "す", "続", "け",
+                    "対", "戦", "を", "や", "め", "る", "チ", "ー", "ム", "編", "成", "す", "続",
+                    "け",
                 ]
                 .map(str::to_string)
                 .to_vec(),
@@ -204,18 +205,22 @@ mod tests {
 
     /// `config/phase_rules.toml` のコンパイル時埋め込みコピー。
     /// テスト実行時のカレントディレクトリに依存しない。
-    const EMBEDDED_PHASE_RULES_TOML: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/phase_rules.toml"));
+    const EMBEDDED_PHASE_RULES_TOML: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/config/phase_rules.toml"
+    ));
 
     /// `config/inference.toml` のコンパイル時埋め込みコピー。
-    const EMBEDDED_INFERENCE_TOML: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/config/inference.toml"));
+    const EMBEDDED_INFERENCE_TOML: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/config/inference.toml"
+    ));
 
     /// TOML 設定がパースでき、組み込みデフォルトと一致することを確認する。
     #[test]
     fn toml_config_parses_and_matches_default() {
-        let rules: PhaseRules = toml::from_str(EMBEDDED_PHASE_RULES_TOML)
-            .expect("config/phase_rules.toml must parse");
+        let rules: PhaseRules =
+            toml::from_str(EMBEDDED_PHASE_RULES_TOML).expect("config/phase_rules.toml must parse");
         let default = PhaseRules::default();
         assert_eq!(rules.ribbon.crop, default.ribbon.crop);
         assert_eq!(rules.ribbon.target_chars, default.ribbon.target_chars);
@@ -232,8 +237,8 @@ mod tests {
     /// 推論TOML(`[ocr]`テーブル含む)がパースでき、組み込みデフォルトと一致することを確認する。
     #[test]
     fn inference_toml_parses_and_matches_default() {
-        let config: InferenceConfig = toml::from_str(EMBEDDED_INFERENCE_TOML)
-            .expect("config/inference.toml must parse");
+        let config: InferenceConfig =
+            toml::from_str(EMBEDDED_INFERENCE_TOML).expect("config/inference.toml must parse");
         let default = InferenceConfig::default();
         assert_eq!(config.resolution, default.resolution);
         assert_eq!(config.ocr, default.ocr);

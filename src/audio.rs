@@ -2,7 +2,10 @@ mod resample;
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer, Split}};
+use ringbuf::{
+    traits::{Consumer, Split},
+    HeapCons, HeapProd, HeapRb,
+};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -133,14 +136,16 @@ impl AudioPipeline for CpalAudioPassthrough {
         info!("Audio Input: {in_channels} ch, {in_sample_rate} Hz");
         info!("Audio Output: {out_channels} ch, {out_sample_rate} Hz");
 
-        let buffer_capacity =
-            calculate_ring_buffer_capacity(out_sample_rate, out_channels as u32, self.target_latency);
+        let buffer_capacity = calculate_ring_buffer_capacity(
+            out_sample_rate,
+            out_channels as u32,
+            self.target_latency,
+        );
         let ring_buffer = HeapRb::<f32>::new(buffer_capacity);
         let (audio_producer, audio_consumer) = ring_buffer.split();
 
         let sample_rate_resample_ratio = out_sample_rate as f64 / in_sample_rate as f64;
-        let resampler =
-            LinearResampler::new(in_channels, out_channels, sample_rate_resample_ratio);
+        let resampler = LinearResampler::new(in_channels, out_channels, sample_rate_resample_ratio);
 
         let input_stream =
             Self::build_input_stream(input_device, input_config, audio_producer, resampler)?;
@@ -160,3 +165,4 @@ impl AudioPipeline for CpalAudioPassthrough {
         Ok(())
     }
 }
+

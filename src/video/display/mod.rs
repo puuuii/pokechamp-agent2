@@ -219,7 +219,8 @@ impl DisplayWindow {
         self.last_phase_text_size = text_size;
 
         // テキストの右側に▶ボタンを描く(表示幅に合わせて配置)。
-        self.phase_button.update_for_text(&mut buffer, PHASE_TEXT_X, PHASE_TEXT_Y, text_size);
+        self.phase_button
+            .update_for_text(&mut buffer, PHASE_TEXT_X, PHASE_TEXT_Y, text_size);
 
         self.last_phase_text = current_text;
     }

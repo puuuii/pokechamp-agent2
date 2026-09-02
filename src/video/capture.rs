@@ -1,8 +1,8 @@
 use anyhow::Result;
 use nokhwa::{
-    query,
     Camera,
     pixel_format::RgbFormat,
+    query,
     utils::{
         ApiBackend, CameraFormat, CameraIndex, RequestedFormat, RequestedFormatType, Resolution,
     },
@@ -10,7 +10,7 @@ use nokhwa::{
 use std::sync::Arc;
 use tracing::info;
 
-use crate::hardware::{FrameBuffer, VideoSpec, VideoSource};
+use crate::hardware::{FrameBuffer, VideoSource, VideoSpec};
 
 use super::colorspace::decode_yuyv_to_packed_rgb_parallel;
 
@@ -66,9 +66,8 @@ impl NokhwaCapture {
     ///
     /// 名前マッチとすることで、他デバイスの挿入でデバイスindexがずれ込んでも安定する。
     fn find_device_index(keyword: &str) -> Result<CameraIndex> {
-        let devices = query(ApiBackend::Auto).map_err(|e| {
-            anyhow::anyhow!("Failed to enumerate video devices: {e}")
-        })?;
+        let devices = query(ApiBackend::Auto)
+            .map_err(|e| anyhow::anyhow!("Failed to enumerate video devices: {e}"))?;
 
         let keyword = keyword.to_lowercase();
         let Some(wanted) = devices

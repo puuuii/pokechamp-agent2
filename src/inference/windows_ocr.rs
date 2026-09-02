@@ -7,8 +7,8 @@ use tracing::{debug, info};
 use crate::hardware::FrameBuffer;
 use crate::video::CropArea;
 
-use super::analyzer::FrameAnalyzer;
 use super::ManualPhaseAdvance;
+use super::analyzer::FrameAnalyzer;
 
 /// フレーム分析ループ(analyzer 汎用)。
 ///

@@ -73,8 +73,7 @@ impl LinearResampler {
             return;
         }
 
-        let output_frame_count =
-            ((input_frame_count as f64) * self.ratio).round() as usize;
+        let output_frame_count = ((input_frame_count as f64) * self.ratio).round() as usize;
 
         for output_index in 0..output_frame_count {
             let source_position = output_index as f64 / self.ratio;
@@ -84,11 +83,20 @@ impl LinearResampler {
             let start_frame: &[f32] = if lower_frame_index < 0 {
                 &self.previous_block_last_frame
             } else {
-                frame_at(input, lower_frame_index as usize, input_frame_count, self.in_channels)
+                frame_at(
+                    input,
+                    lower_frame_index as usize,
+                    input_frame_count,
+                    self.in_channels,
+                )
             };
 
-            let end_frame: &[f32] =
-                frame_at(input, (lower_frame_index + 1) as usize, input_frame_count, self.in_channels);
+            let end_frame: &[f32] = frame_at(
+                input,
+                (lower_frame_index + 1) as usize,
+                input_frame_count,
+                self.in_channels,
+            );
 
             for out_ch in 0..self.out_channels {
                 let in_ch = if out_ch < self.in_channels { out_ch } else { 0 };
@@ -106,9 +114,8 @@ impl LinearResampler {
         }
 
         let last_frame_start = (input_frame_count - 1) * self.in_channels;
-        self.previous_block_last_frame.copy_from_slice(
-            &input[last_frame_start..last_frame_start + self.in_channels],
-        );
+        self.previous_block_last_frame
+            .copy_from_slice(&input[last_frame_start..last_frame_start + self.in_channels]);
     }
 
     /// 破棄が起きている場合、1秒に1回まで警告ログを出力する。
@@ -130,7 +137,10 @@ impl LinearResampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ringbuf::{HeapRb, traits::{Consumer, Split}};
+    use ringbuf::{
+        HeapRb,
+        traits::{Consumer, Split},
+    };
 
     fn run(input: &[f32], in_channels: usize, out_channels: usize, ratio: f64) -> Vec<f32> {
         let mut resampler = LinearResampler::new(in_channels, out_channels, ratio);

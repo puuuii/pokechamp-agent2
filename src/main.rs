@@ -26,8 +26,7 @@ const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30;
 
 /// ロギング初期化(RUST_LOG 環境変数、未設定時は info)。
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
@@ -37,11 +36,11 @@ fn init_tracing() {
 fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    let phase_rules = config::load_or_default::<PhaseRules>(PHASE_RULES_CONFIG_PATH, "フェーズルール");
+    let phase_rules =
+        config::load_or_default::<PhaseRules>(PHASE_RULES_CONFIG_PATH, "フェーズルール");
     let inference_config =
         config::load_or_default::<InferenceConfig>(INFERENCE_CONFIG_PATH, "推論");
-    let panel_config =
-        config::load_or_default::<DisplayPanelConfig>(DISPLAY_CONFIG_PATH, "表示");
+    let panel_config = config::load_or_default::<DisplayPanelConfig>(DISPLAY_CONFIG_PATH, "表示");
     let audio_config = config::load_or_default::<AudioConfig>(AUDIO_CONFIG_PATH, "音声");
 
     // キャプチャ機種の識別情報。機種追加は hardware.rs のプロファイルconst追加で対応する。

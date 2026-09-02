@@ -1,9 +1,9 @@
 use windows::{
-    core::HSTRING,
     Globalization::Language,
     Graphics::Imaging::{BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap},
     Media::Ocr::OcrEngine,
     Storage::Streams::DataWriter,
+    core::HSTRING,
 };
 
 use crate::hardware::FrameBuffer;
@@ -121,8 +121,7 @@ impl PhaseDetector {
         let (model_w, model_h) = self.resolution.as_usize();
         let crop = target.crop.to_pixels(model_w, model_h);
 
-        let text =
-            self.recognize_text_in_crop(frame, crop, self.ocr.upscale_factor)?;
+        let text = self.recognize_text_in_crop(frame, crop, self.ocr.upscale_factor)?;
 
         Ok(text
             .as_deref()
