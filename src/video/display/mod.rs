@@ -1,5 +1,6 @@
 mod crop_input;
 mod phase_button;
+mod usage_button;
 
 pub use crop_input::CropInputController;
 pub use phase_button::PhaseButton;
@@ -9,15 +10,17 @@ use super::jp_text::JpTextRenderer;
 use super::{CropArea, PixelCropArea};
 use crate::hardware::FrameBuffer;
 use crate::inference::PhaseStatus;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossbeam_channel::Receiver;
 use minifb::{Window, WindowOptions};
 use serde::Deserialize;
-use std::sync::atomic::AtomicBool;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 use tracing::warn;
+use usage_button::UsageButton;
 
 // --- UI余白パネル関連 -----------------------------------------------
 /// 表示ウィンドウのレイアウトパラメータ。
@@ -52,11 +55,46 @@ const PHASE_TEXT_X: usize = 10;
 const PHASE_TEXT_Y: usize = 40;
 const PHASE_TEXT_PIXEL_HEIGHT: f32 = 20.0;
 
+/// 「使用率更新」ボタンのY座標(フェーズ表示行のすぐ下)。
+const USAGE_BUTTON_Y: usize = PHASE_TEXT_Y + 30;
+
 /// 静的パネルテキスト(プレースホルダー等)のピクセル高さ。
 const STATIC_TEXT_PIXEL_HEIGHT: f32 = 14.0;
 
 /// 静的パネルのプレースホルダーテキスト。
 const PANEL_PLACEHOLDER_TEXT: &str = "TEST TEXT";
+
+/// scripts\.venv の Python インタプリタパス(Windows想定)。
+fn usage_script_python_path() -> PathBuf {
+    PathBuf::from("scripts")
+        .join(".venv")
+        .join("Scripts")
+        .join("python.exe")
+}
+
+/// 実行対象の使用率取得スクリプト。
+fn usage_script_path() -> PathBuf {
+    PathBuf::from("scripts").join("dl_usage.py")
+}
+
+/// scripts\.venv の Python で scripts\dl_usage.py を実行する。
+/// 呼び出し元でスレッドに包んで非同期実行することを想定している。
+fn run_usage_update_script() -> Result<()> {
+    let python = usage_script_python_path();
+    let script = usage_script_path();
+
+    let status = std::process::Command::new(&python)
+        .arg(&script)
+        .status()
+        .with_context(|| format!("Pythonの起動に失敗しました: {}", python.display()))?;
+
+    anyhow::ensure!(
+        status.success(),
+        "dl_usage.py が異常終了しました (exit status: {status})"
+    );
+
+    Ok(())
+}
 
 pub struct DisplayWindow {
     window: Window,
@@ -69,6 +107,9 @@ pub struct DisplayWindow {
     render_buffer: Vec<u32>,
     crop_input: CropInputController,
     phase_button: PhaseButton,
+    usage_button: UsageButton,
+    /// 使用率更新スクリプトが実行中かどうか(多重起動防止)。
+    usage_update_running: Arc<AtomicBool>,
     jp_text_renderer: Option<JpTextRenderer>,
     last_phase_text_size: (usize, usize),
     last_phase_text: String,
@@ -110,6 +151,8 @@ impl DisplayWindow {
             render_buffer: vec![0u32; total_width * total_height],
             crop_input: CropInputController::new(panel.crop_adjust_step),
             phase_button: PhaseButton::new(Arc::clone(manual_phase_advance)),
+            usage_button: UsageButton::new(),
+            usage_update_running: Arc::new(AtomicBool::new(false)),
             jp_text_renderer,
             last_phase_text_size: (0, 0),
             last_phase_text: String::new(),
@@ -152,6 +195,10 @@ impl DisplayWindow {
             PANEL_TEXT_COLOR,
             STATIC_TEXT_PIXEL_HEIGHT,
         );
+
+        // フェーズ表示の直下に「使用率更新」ボタンを配置する(常設・静的)。
+        self.usage_button
+            .update(&mut buffer, renderer, PHASE_TEXT_X, USAGE_BUTTON_Y);
     }
 
     pub fn is_open(&self) -> bool {
@@ -225,6 +272,27 @@ impl DisplayWindow {
         self.last_phase_text = current_text;
     }
 
+    /// 「使用率更新」ボタン押下時のハンドラ。
+    ///
+    /// scripts\.venv の Python で scripts\dl_usage.py を別スレッドで実行し、
+    /// UIスレッドをブロックしない。既に実行中なら何もしない(多重起動防止)。
+    fn trigger_usage_update(&self) {
+        if self.usage_update_running.swap(true, Ordering::Relaxed) {
+            warn!("使用率更新は既に実行中のためスキップしました");
+            return;
+        }
+
+        let running = Arc::clone(&self.usage_update_running);
+        thread::spawn(move || {
+            let result = run_usage_update_script();
+            running.store(false, Ordering::Relaxed);
+            match result {
+                Ok(()) => println!("使用率更新が完了しました"),
+                Err(e) => eprintln!("使用率更新の実行に失敗しました: {e}"),
+            }
+        });
+    }
+
     pub fn render_latest(
         &mut self,
         rx_frame: &Receiver<FrameBuffer>,
@@ -233,6 +301,9 @@ impl DisplayWindow {
     ) -> Result<()> {
         self.crop_input.handle(&self.window, crop_area);
         self.phase_button.handle_click(&self.window);
+        if self.usage_button.handle_click(&self.window) {
+            self.trigger_usage_update();
+        }
         self.update_phase_panel(phase_status);
 
         let has_new_frame = self.drain_queue_and_get_latest_frame(rx_frame);
