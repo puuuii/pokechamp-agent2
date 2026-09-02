@@ -1,0 +1,6 @@
+# 音声パススルーのパラメータ。
+#
+# target_latency_millis : 目標の音声遅延(ミリ秒)。
+# リングバッファ容量はこれより導出される。
+
+target_latency_millis = 50

@@ -1,0 +1,11 @@
+# 表示ウィンドウのレイアウトパラメータ。
+#
+# left_panel_width    : 左パネル幅(ピクセル)
+# right_panel_width   : 右パネル幅(ピクセル)
+# bottom_panel_height : 下パネル高さ(ピクセル)
+# crop_adjust_step    : クロップ調整(矢印キー1押し)の相対ステップ
+
+left_panel_width = 200
+right_panel_width = 200
+bottom_panel_height = 100
+crop_adjust_step = 0.0025

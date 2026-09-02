@@ -1,0 +1,27 @@
+[package]
+name = "pokechamp-agent2"
+version = "0.1.0"
+edition = "2024"
+default-run = "pokechamp-agent2"
+
+[dependencies]
+nokhwa = { version = "0.10", features = ["input-native", "camera-sync-impl"] }
+minifb = "0.27"
+anyhow = "1"
+crossbeam-channel = "0.5"
+cpal = "0.15"
+ringbuf = "0.4"
+rayon = "1.12.0"
+rusttype = "0.9.3"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+] }
