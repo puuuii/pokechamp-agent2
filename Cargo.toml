@@ -3,16 +3,15 @@ name = "pokechamp-agent2"
 version = "0.1.0"
 edition = "2024"
 default-run = "pokechamp-agent2"
-
 [dependencies]
 nokhwa = { version = "0.10", features = ["input-native", "camera-sync-impl"] }
-minifb = "0.27"
+eframe = "=0.33.0"
+egui = "=0.33.0"
 anyhow = "1"
 crossbeam-channel = "0.5"
 cpal = "0.15"
 ringbuf = "0.4"
 rayon = "1.12.0"
-rusttype = "0.9.3"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
 tracing = "0.1"

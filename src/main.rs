@@ -14,7 +14,7 @@ use tracing_subscriber::prelude::*;
 use audio::{AudioConfig, CpalAudioPassthrough};
 use hardware::{AudioPipeline, HardwareProfile};
 use inference::{InferenceConfig, InferenceWorker, PhaseRules, PhaseStatus};
-use video::{CaptureService, CropArea, DisplayPanelConfig, DisplayWindow, NokhwaCapture};
+use video::{CaptureService, CropArea, DisplayApp, DisplayPanelConfig, NokhwaCapture};
 
 const PHASE_RULES_CONFIG_PATH: &str = "config/phase_rules.toml";
 const INFERENCE_CONFIG_PATH: &str = "config/inference.toml";
@@ -46,8 +46,6 @@ fn main() -> anyhow::Result<()> {
     // キャプチャ機種の識別情報。機種追加は hardware.rs のプロファイルconst追加で対応する。
     let profile = HardwareProfile::AVERMEDIA_LIVE_GAMER_MINI_GC311;
 
-    // 具体的な映像ソース(nokhwa)の生成は呼び出し側で行い、
-    // `CaptureService` には `Box<dyn VideoSource>` として注入する。
     let video_source = NokhwaCapture::new(&profile.video, profile.video_device_keyword)?;
     let capture_service =
         CaptureService::new(Box::new(video_source), ML_SUBSAMPLING_INTERVAL_FRAMES);
@@ -81,31 +79,47 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&shutdown),
     );
 
-    let display_resolution = profile.video.resolution();
-    let mut window = DisplayWindow::open_uncapped(
-        "Switch Capture",
-        display_resolution,
-        panel_config,
-        &manual_phase_advance,
-    )?;
-
     println!("\n=================== クロップ調整操作 ===================");
     println!("  [矢印キー]           : 赤枠の移動 (X, Y)");
     println!("  [Shift + 矢印キー]   : 赤枠のサイズ変更 (Width, Height)");
     println!("========================================================\n");
 
-    while window.is_open() {
-        if let Err(e) = window.render_latest(&rx_display, &crop_area, &phase_status) {
-            error!("Display render error: {e}");
-            continue;
-        }
-    }
+    let display_resolution = profile.video.resolution();
+    let total_width =
+        panel_config.left_panel_width + display_resolution.0 + panel_config.right_panel_width;
+    let total_height = display_resolution.1 + panel_config.bottom_panel_height;
+
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([total_width as f32, total_height as f32])
+            .with_resizable(false),
+        // キャプチャ側のフレームレートに追従する低遅延表示のため、垂直同期はオフ。
+        vsync: false,
+        ..Default::default()
+    };
+
+    let shutdown_on_close = Arc::clone(&shutdown);
+    let run_result = eframe::run_native(
+        "Switch Capture",
+        native_options,
+        Box::new(move |cc| {
+            Ok(Box::new(DisplayApp::new(
+                cc,
+                display_resolution,
+                panel_config,
+                rx_display,
+                crop_area,
+                phase_status,
+                manual_phase_advance,
+            )))
+        }),
+    );
 
     // ウィンドウクローズ: シャットダウンを要求し、全スレッドをjoinして終了する。
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown_on_close.store(true, Ordering::Relaxed);
     let _ = capture_handle.join();
     let _ = audio_handle.join();
     let _ = inference_handle.join();
 
-    Ok(())
+    run_result.map_err(|e| anyhow::anyhow!("eframe実行エラー: {e}"))
 }
