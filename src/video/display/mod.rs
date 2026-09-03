@@ -307,6 +307,14 @@ impl eframe::App for DisplayApp {
                 if ui.button("使用率更新").clicked() {
                     self.trigger_usage_update();
                 }
+
+                ui.separator();
+                let crop = *self.crop_area.read().unwrap();
+                ui.label("クロップ枠(相対座標)");
+                ui.monospace(format!("x: {:.4}", crop.x));
+                ui.monospace(format!("y: {:.4}", crop.y));
+                ui.monospace(format!("w: {:.4}", crop.width));
+                ui.monospace(format!("h: {:.4}", crop.height));
             });
 
         egui::TopBottomPanel::bottom("bottom_panel")
