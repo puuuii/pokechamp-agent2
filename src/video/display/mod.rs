@@ -1,7 +1,7 @@
 use super::pixel::unpack_rgb;
 use super::{CropArea, PixelCropArea};
 use crate::hardware::FrameBuffer;
-use crate::inference::PhaseStatus;
+use crate::inference::{PartyMatchStatus, PartySlots, PhaseStatus};
 use anyhow::{Context, Result};
 use crossbeam_channel::Receiver;
 use egui::{Color32, ColorImage, Key, TextureHandle, TextureOptions, Vec2};
@@ -14,17 +14,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
-/// 表示ウィンドウのレイアウトパラメータ。
-/// 通常は TOML ファイル(config/display.toml)から読み込む。
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct DisplayPanelConfig {
-    /// 左パネル幅(ピクセル)。
     pub left_panel_width: usize,
-    /// 右パネル幅(ピクセル)。
     pub right_panel_width: usize,
-    /// 下パネル高さ(ピクセル)。
     pub bottom_panel_height: usize,
-    /// クロップ調整(矢印キー1押し)の相対ステップ。
     pub crop_adjust_step: f32,
 }
 
@@ -39,22 +33,14 @@ impl Default for DisplayPanelConfig {
     }
 }
 
-/// 静的パネルのプレースホルダーテキスト。
-const PANEL_PLACEHOLDER_TEXT: &str = "TEST TEXT";
-
-/// クロップキー入力の連続適用を抑制する最小間隔。
 const CROP_KEY_REPEAT_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Windowsに標準搭載されている日本語対応フォントの候補。
-/// 上から順に探して、最初に読み込めたものを使う。
 const CANDIDATE_FONT_PATHS: &[&str] = &[
     r"C:\Windows\Fonts\YuGothR.ttc",
     r"C:\Windows\Fonts\meiryo.ttc",
     r"C:\Windows\Fonts\msgothic.ttc",
 ];
 
-/// eguiのフォント設定に日本語フォントを追加する。
-/// 見つからなければ警告ログを出し、既定フォント(日本語グリフなし)のまま続行する。
 fn install_jp_font(ctx: &egui::Context) {
     for path in CANDIDATE_FONT_PATHS {
         if let Ok(bytes) = std::fs::read(path) {
@@ -83,7 +69,6 @@ fn install_jp_font(ctx: &egui::Context) {
     );
 }
 
-/// scripts\.venv の Python インタプリタパス(Windows想定)。
 fn usage_script_python_path() -> PathBuf {
     PathBuf::from("scripts")
         .join(".venv")
@@ -91,13 +76,10 @@ fn usage_script_python_path() -> PathBuf {
         .join("python.exe")
 }
 
-/// 実行対象の使用率取得スクリプト。
 fn usage_script_path() -> PathBuf {
     PathBuf::from("scripts").join("dl_usage.py")
 }
 
-/// scripts\.venv の Python で scripts\dl_usage.py を実行する。
-/// 呼び出し元でスレッドに包んで非同期実行することを想定している。
 fn run_usage_update_script() -> Result<()> {
     let python = usage_script_python_path();
     let script = usage_script_path();
@@ -123,7 +105,8 @@ pub struct DisplayApp {
     crop_area: Arc<RwLock<CropArea>>,
     phase_status: PhaseStatus,
     manual_phase_advance: Arc<AtomicBool>,
-    /// 使用率更新スクリプトが実行中かどうか(多重起動防止)。
+    party_match_status: PartyMatchStatus,
+    party_slots: PartySlots,
     usage_update_running: Arc<AtomicBool>,
     texture: Option<TextureHandle>,
     show_debug_frame: bool,
@@ -131,6 +114,7 @@ pub struct DisplayApp {
 }
 
 impl DisplayApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         video_resolution: (usize, usize),
@@ -139,6 +123,8 @@ impl DisplayApp {
         crop_area: Arc<RwLock<CropArea>>,
         phase_status: PhaseStatus,
         manual_phase_advance: Arc<AtomicBool>,
+        party_match_status: PartyMatchStatus,
+        party_slots: PartySlots,
     ) -> Self {
         install_jp_font(&cc.egui_ctx);
         let (video_width, video_height) = video_resolution;
@@ -151,6 +137,8 @@ impl DisplayApp {
             crop_area,
             phase_status,
             manual_phase_advance,
+            party_match_status,
+            party_slots,
             usage_update_running: Arc::new(AtomicBool::new(false)),
             texture: None,
             show_debug_frame: cfg!(debug_assertions),
@@ -158,7 +146,6 @@ impl DisplayApp {
         }
     }
 
-    /// キューに溜まったフレームを読み捨て、最新の1枚だけ返す。
     fn drain_latest_frame(&mut self) -> Option<FrameBuffer> {
         let mut latest = None;
         while let Ok(frame) = self.rx_display.try_recv() {
@@ -167,7 +154,6 @@ impl DisplayApp {
         latest
     }
 
-    /// packed RGB(u32) の FrameBuffer を egui の ColorImage に変換する(並列化)。
     fn frame_to_color_image(frame: &FrameBuffer, width: usize, height: usize) -> ColorImage {
         let pixels: Vec<Color32> = frame
             .par_iter()
@@ -184,7 +170,6 @@ impl DisplayApp {
         }
     }
 
-    /// 矢印キーでクロップ移動(Shiftでリサイズ)、Dキーでデバッグ枠表示切替(debugビルドのみ)。
     fn handle_crop_keys(&mut self, ctx: &egui::Context) {
         let (shift, left, right, up, down, toggle_debug) = ctx.input(|i| {
             (
@@ -211,8 +196,6 @@ impl DisplayApp {
 
         let step = self.panel.crop_adjust_step;
         let mut crop_guard = self.crop_area.write().unwrap();
-        // RwLockWriteGuard越しだとフィールドを分割借用できないため、
-        // 一度具体的な &mut CropArea に変換してから分割する。
         let crop: &mut CropArea = &mut crop_guard;
         let (horizontal, vertical) = if shift {
             (&mut crop.width, &mut crop.height)
@@ -243,10 +226,6 @@ impl DisplayApp {
         self.last_crop_key_time = Instant::now();
     }
 
-    /// 「使用率更新」ボタン押下時のハンドラ。
-    ///
-    /// scripts\.venv の Python で scripts\dl_usage.py を別スレッドで実行し、
-    /// UIスレッドをブロックしない。既に実行中なら何もしない(多重起動防止)。
     fn trigger_usage_update(&self) {
         if self.usage_update_running.swap(true, Ordering::Relaxed) {
             warn!("使用率更新は既に実行中のためスキップしました");
@@ -267,7 +246,6 @@ impl DisplayApp {
 
 impl eframe::App for DisplayApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 映像はキャプチャスレッドから非同期に届くため、毎フレーム再描画を要求して追従する。
         ctx.request_repaint();
 
         self.handle_crop_keys(ctx);
@@ -287,7 +265,21 @@ impl eframe::App for DisplayApp {
             .exact_width(self.panel.left_panel_width as f32)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(PANEL_PLACEHOLDER_TEXT);
+                let matches = self.party_match_status.read().unwrap();
+
+                ui.label("味方");
+                for (i, name) in matches.iter().take(6).enumerate() {
+                    let display = if name.is_empty() { "-" } else { name.as_str() };
+                    ui.monospace(format!("{}: {}", i + 1, display));
+                }
+
+                ui.separator();
+
+                ui.label("相手");
+                for (i, name) in matches.iter().skip(6).take(6).enumerate() {
+                    let display = if name.is_empty() { "-" } else { name.as_str() };
+                    ui.monospace(format!("{}: {}", i + 1, display));
+                }
             });
 
         egui::SidePanel::right("right_panel")
@@ -320,7 +312,7 @@ impl eframe::App for DisplayApp {
         egui::TopBottomPanel::bottom("bottom_panel")
             .exact_height(self.panel.bottom_panel_height as f32)
             .show(ctx, |ui| {
-                ui.label(PANEL_PLACEHOLDER_TEXT);
+                ui.label("TEST TEXT");
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -339,12 +331,18 @@ impl eframe::App for DisplayApp {
                     .unwrap()
                     .to_pixels(self.video_width, self.video_height);
                 draw_crop_overlay(ui, response.rect, &crop);
+                draw_party_slot_overlays(
+                    ui,
+                    response.rect,
+                    &self.party_slots,
+                    self.video_width,
+                    self.video_height,
+                );
             }
         });
     }
 }
 
-/// 映像テクスチャ上に赤枠のクロップ範囲をオーバーレイ表示する(デバッグ用)。
 fn draw_crop_overlay(ui: &egui::Ui, image_rect: egui::Rect, crop: &PixelCropArea) {
     let painter = ui.painter_at(image_rect);
     let top_left = image_rect.min + Vec2::new(crop.x as f32, crop.y as f32);
@@ -356,4 +354,29 @@ fn draw_crop_overlay(ui: &egui::Ui, image_rect: egui::Rect, crop: &PixelCropArea
         egui::Stroke::new(3.0, Color32::RED),
         egui::StrokeKind::Middle,
     );
+}
+
+/// 選出パーティ12箇所のクロップ範囲を黄枠でオーバーレイ表示する(デバッグ用)。
+fn draw_party_slot_overlays(
+    ui: &egui::Ui,
+    image_rect: egui::Rect,
+    party_slots: &PartySlots,
+    video_width: usize,
+    video_height: usize,
+) {
+    let painter = ui.painter_at(image_rect);
+    for crop in party_slots.all_crops() {
+        let pixel_crop = crop.to_pixels(video_width, video_height);
+        let top_left = image_rect.min + Vec2::new(pixel_crop.x as f32, pixel_crop.y as f32);
+        let rect = egui::Rect::from_min_size(
+            top_left,
+            Vec2::new(pixel_crop.width as f32, pixel_crop.height as f32),
+        );
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(2.0, Color32::YELLOW),
+            egui::StrokeKind::Middle,
+        );
+    }
 }

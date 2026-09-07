@@ -222,6 +222,10 @@ impl FrameAnalyzer for PhaseDetector {
         let crop = crop.to_pixels(model_w, model_h);
         self.recognize_text_in_crop(frame, crop, self.ocr.upscale_factor)
     }
+
+    fn is_selecting(&self) -> bool {
+        self.current_phase == Phase::Selecting
+    }
 }
 
 /// target_chars のうち text に含まれる文字の種類数を返す(重複はカウントしない)。
