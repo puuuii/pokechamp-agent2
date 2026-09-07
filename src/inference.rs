@@ -1,19 +1,19 @@
 mod analyzer;
 mod party_matcher;
 mod phase_detector;
+mod pokemon_names;
 mod preprocess;
 mod windows_ocr;
-
+use crate::hardware::FrameBuffer;
+use crate::video::CropArea;
 use crossbeam_channel::Receiver;
+pub use pokemon_names::PokemonNameLookup;
 use serde::Deserialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 use tracing::error;
-
-use crate::hardware::FrameBuffer;
-use crate::video::CropArea;
 
 pub use party_matcher::{PartyIconMatcher, PartySlots};
 
@@ -146,6 +146,7 @@ impl InferenceWorker {
         party_matcher: Arc<PartyIconMatcher>,
         party_slots: PartySlots,
         party_match_status: PartyMatchStatus,
+        pokemon_names: Arc<PokemonNameLookup>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             if let Err(e) = run_inference_thread(
@@ -159,6 +160,7 @@ impl InferenceWorker {
                 party_matcher,
                 party_slots,
                 party_match_status,
+                pokemon_names,
             ) {
                 error!("OCR Worker error: {e}");
             }
@@ -178,6 +180,7 @@ fn run_inference_thread(
     party_matcher: Arc<PartyIconMatcher>,
     party_slots: PartySlots,
     party_match_status: PartyMatchStatus,
+    pokemon_names: Arc<PokemonNameLookup>,
 ) -> anyhow::Result<()> {
     let detector = phase_detector::PhaseDetector::new(phase_rules, &config)?;
     let frame_resolution = config.resolution.as_usize();
@@ -194,6 +197,7 @@ fn run_inference_thread(
         party_slots,
         party_match_status,
         frame_resolution,
+        pokemon_names,
     )
 }
 

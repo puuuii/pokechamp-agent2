@@ -8,10 +8,8 @@ use crate::hardware::FrameBuffer;
 use crate::video::CropArea;
 
 use super::analyzer::FrameAnalyzer;
-use super::{ManualPhaseAdvance, PartyIconMatcher, PartyMatchStatus, PartySlots};
+use super::{ManualPhaseAdvance, PartyIconMatcher, PartyMatchStatus, PartySlots, PokemonNameLookup};
 
-/// フレーム分析ループ(analyzer 汎用)。
-#[allow(clippy::too_many_arguments)]
 /// フレーム分析ループ(analyzer 汎用)。
 #[allow(clippy::too_many_arguments)]
 pub fn run_analysis_loop<A: FrameAnalyzer>(
@@ -26,6 +24,7 @@ pub fn run_analysis_loop<A: FrameAnalyzer>(
     party_slots: PartySlots,
     party_match_status: PartyMatchStatus,
     frame_resolution: (usize, usize),
+    pokemon_names: Arc<PokemonNameLookup>,
 ) -> anyhow::Result<()> {
     let mut last_analysis_time = Instant::now() - analysis_interval;
     // 選出フェーズ1回の滞在につき、パーティマッチングを1度だけ行うためのフラグ。
@@ -51,6 +50,7 @@ pub fn run_analysis_loop<A: FrameAnalyzer>(
                     &frame,
                     frame_resolution,
                     &party_match_status,
+                    &pokemon_names,
                 );
                 party_matched_this_phase = true;
             }
@@ -78,6 +78,7 @@ pub fn run_analysis_loop<A: FrameAnalyzer>(
                 &frame,
                 frame_resolution,
                 &party_match_status,
+                &pokemon_names,
             );
             party_matched_this_phase = true;
         }
@@ -94,6 +95,7 @@ fn run_party_match(
     frame: &FrameBuffer,
     frame_resolution: (usize, usize),
     party_match_status: &PartyMatchStatus,
+    pokemon_names: &PokemonNameLookup,
 ) {
     let (frame_width, frame_height) = frame_resolution;
 
@@ -103,6 +105,7 @@ fn run_party_match(
         .map(|&crop| {
             party_matcher
                 .match_crop(frame, frame_width, frame_height, crop)
+                .map(|file_name| pokemon_names.resolve(&file_name))
                 .unwrap_or_default()
         })
         .collect();

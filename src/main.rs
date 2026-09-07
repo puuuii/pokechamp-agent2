@@ -16,7 +16,7 @@ use audio::{AudioConfig, CpalAudioPassthrough};
 use hardware::{AudioPipeline, HardwareProfile};
 use inference::{
     InferenceConfig, InferenceWorker, PartyIconMatcher, PartyMatchStatus, PartySlots, PhaseRules,
-    PhaseStatus,
+    PhaseStatus, PokemonNameLookup,
 };
 use video::{CaptureService, CropArea, DisplayApp, DisplayPanelConfig, NokhwaCapture};
 
@@ -28,6 +28,7 @@ const PARTY_SLOTS_CONFIG_PATH: &str = "config/party_slots.toml";
 const POKEMON_ICON_DIR: &str = "img";
 const ML_SUBSAMPLING_INTERVAL_FRAMES: u32 = 30;
 const EMBEDDING_MODEL_PATH: &str = "models/embedding_model.onnx";
+const POKEMON_DATA_PATH: &str = "raw_data/pkchPokemonData.json";
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -59,6 +60,16 @@ fn main() -> anyhow::Result<()> {
                 "ポケモンアイコンテンプレートの読み込みに失敗しました: {e}。マッチング機能は無効になります。"
             );
             Arc::new(PartyIconMatcher::empty())
+        }
+    };
+
+    let pokemon_names = match PokemonNameLookup::load_from_file(Path::new(POKEMON_DATA_PATH)) {
+        Ok(lookup) => Arc::new(lookup),
+        Err(e) => {
+            error!(
+                "ポケモン名データの読み込みに失敗しました: {e}。ファイル名表示にフォールバックします。"
+            );
+            Arc::new(PokemonNameLookup::empty())
         }
     };
 
@@ -97,6 +108,7 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&party_matcher),
         party_slots.clone(),
         Arc::clone(&party_match_status),
+        Arc::clone(&pokemon_names),
     );
 
     println!("\n=================== クロップ調整操作 ===================");
