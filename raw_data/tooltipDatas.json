@@ -116,7 +116,7 @@
   {
     "name": "かそく",
     "txt": "",
-    "info": "ターン終わりに素早さが1段階上がる。",
+    "info": "ターン終わりに素早さが1段階上がる。交代で出てきたターンはすばやさが上がらない。",
     "aid": "555160"
   },
   {
@@ -214,6 +214,12 @@
     "txt": "",
     "info": "HPが1/4以下の時に食べるきのみをHPが1/2以下の時に食べてしまう。",
     "aid": "555146"
+  },
+  {
+    "name": "くさのけがわ",
+    "txt": "",
+    "info": "グラスフィールド状態の時、防御が1.5倍になる。",
+    "aid": "575689"
   },
   {
     "name": "くだけるよろい",
@@ -510,6 +516,12 @@
     "aid": "555097"
   },
   {
+    "name": "にげあし",
+    "txt": "",
+    "info": "交代を邪魔する効果を無視して、手持ちの他のポケモンと交代することができる。",
+    "aid": "575692"
+  },
+  {
     "name": "ぬめぬめ",
     "txt": "",
     "info": "接触技を受けると相手の素早さを1段階下げる。",
@@ -586,6 +598,12 @@
     "txt": "",
     "info": "登場した時から5ターンの間、にほんばれ状態にする。",
     "aid": "555084"
+  },
+  {
+    "name": "びびり",
+    "txt": "",
+    "info": "あく、ゴースト、むしタイプの技のダメージやいかくを受けた時、素早さが1段階上がる。",
+    "aid": "575690"
   },
   {
     "name": "ひらいしん",
@@ -710,7 +728,7 @@
   {
     "name": "ほうし",
     "txt": "",
-    "info": "接触技を受けると、30%の確率で相手をどく状態・まひ状態・ねむり状態のいずれかにする。",
+    "info": "接触技を受けると、30%の確率で相手をどく状態・まひ状態・ねむり状態のいずれかにする。くさタイプのポケモンには効かない。",
     "aid": "564229"
   },
   {
@@ -924,6 +942,12 @@
     "aid": "555031"
   },
   {
+    "name": "はりこみ",
+    "txt": "",
+    "info": "交代で出てきた相手に攻撃する時、技の威力が2倍になる。",
+    "aid": "575688"
+  },
+  {
     "name": "じきゅうりょく",
     "txt": "",
     "info": "技のダメージを受けると防御が1段階上がる。",
@@ -954,9 +978,15 @@
     "aid": "555026"
   },
   {
+    "name": "サイコメイカー",
+    "txt": "",
+    "info": "登場した時から5ターンの間、全体の場をサイコフィールド状態にする。地面にいるすべてのポケモンは、相手の先制技を受けなくなり、またエスパータイプの技の威力が1.3倍になる。",
+    "aid": "575687"
+  },
+  {
     "name": "グラスメイカー",
     "txt": "",
-    "info": "戦闘に出た時、場を「グラスフィールド」にする。地面にいると毎ターン最大HPの1/16回復する。くさタイプの威力が1.3倍になる。「じしん」「じならし」「マグニチュード」の威力が半減する。",
+    "info": "登場した時から5ターンの間、全体の場をグラスフィールド状態にする。",
     "aid": "574622"
   },
   {
@@ -992,7 +1022,7 @@
   {
     "name": "ききかいひ",
     "txt": "",
-    "info": "相手の技でHPが半分になると手持ちと交代する。",
+    "info": "HPが1/2以下になると手持ちに戻る。",
     "aid": "575011"
   },
   {
@@ -1012,6 +1042,12 @@
     "txt": "",
     "info": "フィールドによって自分のタイプが変わる。場がエレキフィールド状態だとでんきタイプ、グラスフィールド状態だとくさタイプ、サイコフィールド状態だとエスパータイプ、ミストフィールド状態だとフェアリータイプになる。",
     "aid": "555018"
+  },
+  {
+    "name": "パンクロック",
+    "txt": "",
+    "info": "音の技の威力が1.3倍になり、音の技で受けるダメージが半減する。",
+    "aid": "575685"
   },
   {
     "name": "じゅくせい",
@@ -1038,10 +1074,22 @@
     "aid": "555014"
   },
   {
+    "name": "はがねのせいしん",
+    "txt": "",
+    "info": "自分と味方のはがねタイプの技の威力が1.5倍になる。",
+    "aid": "575684"
+  },
+  {
     "name": "すじがねいり",
     "txt": "",
     "info": "技を引き受ける特性や技の影響を無視する。",
     "aid": "555013"
+  },
+  {
+    "name": "リベロ",
+    "txt": "",
+    "info": "登場するたび1回だけ自分が出す技と同じタイプに変化する。",
+    "aid": "575686"
   },
   {
     "name": "ふかしのこぶし",
@@ -1066,6 +1114,12 @@
     "txt": "",
     "info": "でんきタイプの技が効かず、素早さが1段階上がる。",
     "aid": "555009"
+  },
+  {
+    "name": "ヘドロえき",
+    "txt": "",
+    "info": "HPを吸い収とる技を受けた時、相手を回復させずその分のダメージを与える。",
+    "aid": "575691"
   },
   {
     "name": "いかりのつぼ",
@@ -1124,7 +1178,7 @@
   {
     "name": "ねつこうかん",
     "txt": "",
-    "info": "ほのおタイプの技を受けると攻撃が1段階上がる。やけど状態にならない。",
+    "info": "ほのおタイプの技のダメージを受けると攻撃が1段階上がる。やけど状態にならない。",
     "aid": "574621"
   },
   {
@@ -1144,6 +1198,12 @@
     "txt": "",
     "info": "相手からの変化技が効かない。",
     "aid": "564233"
+  },
+  {
+    "name": "ばんけん",
+    "txt": "",
+    "info": "いかくが効かず攻撃が1段階上がる。相手を入れ替えさせる技や道具が効かない。",
+    "aid": "575667"
   },
   {
     "name": "どくげしょう",
@@ -1168,6 +1228,12 @@
     "txt": "",
     "info": "状態異常にならない。ゴーストタイプの技で受けるダメージが半減する。",
     "aid": "554994"
+  },
+  {
+    "name": "こぼれダネ",
+    "txt": "",
+    "info": "技のダメージを受けた時から5ターンの間、全体の場をグラスフィールド状態にする。",
+    "aid": "575683"
   },
   {
     "name": "かんろなミツ",
@@ -2490,9 +2556,9 @@
   {
     "name": "きりさく",
     "id": "m159",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 70</span><span>命中100</span><span>PP20</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "急所に当たりやすい。(急所ランク+1)",
+    "aid": "575653",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP20</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555477\" target=\"_blank\">接触</a></span><span><a href=\"https://gamewith.jp/pokemon-champions/555478\" target=\"_blank\">切り</a></span></div>",
+    "info": "きゅうしょアップ+1で攻撃する。<br><br>【きゅうしょアップ】<span>(状態変化)</span><br>自分の攻撃が急所に当たる確率が上がる。+1で12.5%、+2で50%、+3で100%の確率で急所に当たる。",
     "btn": "▶きりさくを覚えるポケモン"
   },
   {
@@ -3386,8 +3452,8 @@
   {
     "name": "びりびりちくちく",
     "id": "m271",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
+    "aid": "575694",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555477\" target=\"_blank\">接触</a></span></div>",
     "info": "30%の確率で相手をひるませる。",
     "btn": "▶びりびりちくちくを覚えるポケモン"
   },
@@ -4082,9 +4148,9 @@
   {
     "name": "ギアチェンジ",
     "id": "m358",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/steel.png\" alt=\"はがね\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：自分</span></div>",
-    "info": "自分の攻撃を1段階上げ、素早さを2段階上げる。",
+    "aid": "575678",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/steel.png\" alt=\"はがね\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：自分</span></div>",
+    "info": "自分の攻撃を1段階上げて素早さを2段階上げる。",
     "btn": "▶ギアチェンジを覚えるポケモン"
   },
   {
@@ -5251,7 +5317,7 @@
     "name": "ドラムアタック",
     "id": "m504",
     "aid": "574660",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/grass.png\" alt=\"くさ\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/grass.png\" alt=\"くさ\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
     "info": "相手の素早さを1段階下げる。",
     "btn": "▶ドラムアタックを覚えるポケモン"
   },
@@ -5266,25 +5332,25 @@
   {
     "name": "かえんボール",
     "id": "m506",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fire.png\" alt=\"ほのお\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中90</span><span>PP5</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "10%の確率で相手をやけど状態にする。自分がこおり状態の時でも使う事ができ、使用するとこおり状態が治る。<br><br>【やけど状態】<span>(状態異常)</span><br>ターン終わりに最大HPの1/16ダメージを受ける。与える物理技のダメージが1/2になる。<br><br>【こおり状態】<span>(状態異常)</span><br>一部の例外を除いて技が使えない。技を使う時に25%の確率で回復する。こおり状態になって3度目は回復する。ほのおタイプ等の技のダメージを受けると回復する。",
+    "aid": "575658",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fire.png\" alt=\"ほのお\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中90</span><span>PP8</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555482\" target=\"_blank\">弾</a></span></div>",
+    "info": "10%の確率で相手をやけど状態にする。使うと自分のこおり状態をなおす。<br><br>【やけど状態】<span>(状態異常)</span><br>ターン終わりに最大HPの1/16ダメージを受ける。与える物理技のダメージが1/2になる。<br><br>【こおり状態】<span>(状態異常)</span><br>一部の例外を除いて技が使えない。技を使う時に25%の確率で回復する。こおり状態になって3度目は回復する。ほのおタイプ等の技のダメージを受けると回復する。",
     "btn": "▶かえんボールを覚えるポケモン"
   },
   {
     "name": "コートチェンジ",
     "id": "m507",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中100</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：全体の場</span></div>",
-    "info": "お互いの場の状態を入れ替える。経過ターン数は引き継がれる。",
+    "aid": "575660",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中100</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：全体の場</span></div>",
+    "info": "味方と相手の場の状態を入れ替える。経過ターン数は引き継がれる。",
     "btn": "▶コートチェンジを覚えるポケモン"
   },
   {
     "name": "ねらいうち",
     "id": "m508",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/water.png\" alt=\"みず\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/tokusyu.jpg\" width=\"25px\" class=\"_icon\" alt=\"特殊\"><span>威力 80</span><span>命中100</span><span>PP15</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "急所に当たりやすい(ランク+1)。対象を変更する効果の影響を受けずに攻撃できる。",
+    "aid": "575664",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/water.png\" alt=\"みず\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/tokusyu.jpg\" width=\"25px\" class=\"_icon\" alt=\"特殊\"><span>威力 85</span><span>命中100</span><span>PP16</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
+    "info": "技を引き受ける特性や技の影響を無視する。きゅうしょアップ+1で攻撃する。<br><br>【きゅうしょアップ】<span>(状態変化)</span><br>自分の攻撃が急所に当たる確率が上がる。+1で12.5%、+2で50%、+3で100%の確率で急所に当たる。",
     "btn": "▶ねらいうちを覚えるポケモン"
   },
   {
@@ -5306,9 +5372,9 @@
   {
     "name": "くらいつく",
     "id": "m511",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/dark.png\" alt=\"あく\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "自分と相手のどちらかが「ひんし」になるまで、交代できなくなる。自分か相手がゴーストタイプの場合は追加効果はない。",
+    "aid": "575701",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/dark.png\" alt=\"あく\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 80</span><span>命中100</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555477\" target=\"_blank\">接触</a></span><span><a href=\"https://gamewith.jp/pokemon-champions/555488\" target=\"_blank\">噛み</a></span></div>",
+    "info": "相手と自分をくらいつく状態にする。<br><br>【くらいつく状態】<span>(状態変化)</span><br>技を使った側と受けた側、両方とも交代ができない。",
     "btn": "▶くらいつくを覚えるポケモン"
   },
   {
@@ -5354,9 +5420,9 @@
   {
     "name": "スターアサルト",
     "id": "m517",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fighting.png\" alt=\"かくとう\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 150</span><span>命中100</span><span>PP5</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "使用した次のターンは行動できない。",
+    "aid": "575693",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fighting.png\" alt=\"かくとう\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 170</span><span>命中100</span><span>PP8</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
+    "info": "使った次のターン、自分は反動状態になる。<br><br>【反動状態】<span>(状態変化)</span><br>1ターン行動できない。",
     "btn": "▶スターアサルトを覚えるポケモン"
   },
   {
@@ -5402,9 +5468,9 @@
   {
     "name": "オーバードライブ",
     "id": "m523",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/tokusyu.jpg\" width=\"25px\" class=\"_icon\" alt=\"特殊\"><span>威力 80</span><span>命中100</span><span>PP10</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手全体</span></div>",
-    "info": "相手の「みがわり」状態を貫通する。",
+    "aid": "575679",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/tokusyu.jpg\" width=\"25px\" class=\"_icon\" alt=\"特殊\"><span>威力 80</span><span>命中100</span><span>PP12</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手全体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555481\" target=\"_blank\">音</a></span></div>",
+    "info": "通常の攻撃技。",
     "btn": "▶オーバードライブを覚えるポケモン"
   },
   {
@@ -5434,9 +5500,9 @@
   {
     "name": "たこがため",
     "id": "m527",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fighting.png\" alt=\"かくとう\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中100</span><span>PP15</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "ゴーストタイプ以外は交代できなくなる。相手はその間、毎ターン防御と特防ランクが1段階ずつ下がる。",
+    "aid": "575682",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/fighting.png\" alt=\"かくとう\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中100</span><span>PP16</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
+    "info": "相手をにげられない状態とたこがため状態にする。<br><br>【にげられない状態】<span>(状態変化)</span><br>交代ができない。<br><br>【たこがため状態】<span>(状態変化)</span><br>ターン終わりに防御、特防が1段階下がる。",
     "btn": "▶たこがためを覚えるポケモン"
   },
   {
@@ -5994,9 +6060,9 @@
   {
     "name": "ミルクのみ",
     "id": "m597",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP5</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：自分</span></div>",
-    "info": "最大HPの半分を回復する。",
+    "aid": "575655",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP8</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：味方</span><span><a href=\"https://gamewith.jp/pokemon-champions/555485\" target=\"_blank\">回復</a></span></div>",
+    "info": "自分か味方のHPを最大HPの1/2回復する。",
     "btn": "▶ミルクのみを覚えるポケモン"
   },
   {
@@ -6826,17 +6892,17 @@
   {
     "name": "きょけんとつげき",
     "id": "m701",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/dragon.png\" alt=\"ドラゴン\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中100</span><span>PP5</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "使用後から次の行動までの相手の攻撃が、必ず命中しダメージが2倍になる。",
+    "aid": "575703",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/dragon.png\" alt=\"ドラゴン\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中100</span><span>PP8</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555477\" target=\"_blank\">接触</a></span></div>",
+    "info": "次に自分が行動するまで、自分は無防備状態になる。<br><br>【無防備状態】<span>(状態変化)</span><br>相手の技が必ず当たり、2倍のダメージになる。",
     "btn": "▶きょけんとつげきを覚えるポケモン"
   },
   {
     "name": "さいきのいのり",
     "id": "m702",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP1</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：自分</span></div>",
-    "info": "控えにいるひんしのポケモンをHPを半分の状態で復活させる。",
+    "aid": "575698",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/normal.png\" alt=\"ノーマル\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/henka.jpg\" width=\"25px\" class=\"_icon\" alt=\"変化\"><span>威力 -</span><span>命中-</span><span>PP1</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：自分</span><span><a href=\"https://gamewith.jp/pokemon-champions/555485\" target=\"_blank\">回復</a></span></div>",
+    "info": "手持ちのひんしのポケモンを最大HPの1/2の状態で復活させる。",
     "btn": "▶さいきのいのりを覚えるポケモン"
   },
   {
@@ -6906,9 +6972,9 @@
   {
     "name": "でんこうそうげき",
     "id": "m711",
-    "aid": "",
-    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中100</span><span>PP5</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span></div>",
-    "info": "使用後自分のでんきタイプがなくなる。",
+    "aid": "575697",
+    "txt": "<div class=\"wd-pkch-tooltip-movetxt\"><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/electric.png\" alt=\"でんき\"/><img src=\"https://img.gamewith.jp/article_tools/pokemon-champions/gacha/buturi.jpg\" width=\"25px\" class=\"_icon\" alt=\"物理\"><span>威力 120</span><span>命中100</span><span>PP8</span></div><div class=\"wd-pkch-tooltip-movetags\"><span>対象：相手1体</span><span><a href=\"https://gamewith.jp/pokemon-champions/555477\" target=\"_blank\">接触</a></span><span><a href=\"https://gamewith.jp/pokemon-champions/555479\" target=\"_blank\">パンチ</a></span></div>",
+    "info": "自分のでんきタイプがなくなる。自分がでんきタイプではない場合、失敗する。",
     "btn": "▶でんこうそうげきを覚えるポケモン"
   },
   {
@@ -7372,6 +7438,12 @@
     "aid": "554707"
   },
   {
+    "name": "ながねぎ",
+    "id": "i38",
+    "info": "カモネギ・ネギガナイトがきゅうしょアップ+2になる。",
+    "aid": "575675"
+  },
+  {
     "name": "こうかくレンズ",
     "id": "i39",
     "info": "持たせると技の命中率が1.1倍になる。",
@@ -7472,6 +7544,72 @@
     "id": "i68",
     "info": "HPを吸い取る技で回復する量が1.3倍になる。ねをはる、ちからをすいとる等も1.3倍になる。",
     "aid": "564167"
+  },
+  {
+    "name": "ゴツゴツメット",
+    "id": "i80",
+    "info": "接触技を受けると相手に最大HPの1/6のダメージを与える。",
+    "aid": "575674"
+  },
+  {
+    "name": "ふうせん",
+    "id": "i81",
+    "info": "地面にいないことになりじめんタイプの技・まきびし・どくびし・ねばねばネット状態が効かない。技のダメージを受けるとその対戦中は無くなる。",
+    "aid": "575673"
+  },
+  {
+    "name": "しめつけバンド",
+    "id": "i82",
+    "info": "バインド状態で与えるダメージが相手の最大HPの1/8ではなく1/6になる。",
+    "aid": "575672"
+  },
+  {
+    "name": "レッドカード",
+    "id": "i83",
+    "info": "技でダメージを与えてきた相手を交代させる。1度使うとその対戦中は無くなる。",
+    "aid": "575676"
+  },
+  {
+    "name": "だっしゅつボタン",
+    "id": "i87",
+    "info": "技のダメージを受けた時手持ちに戻る。1度使うとその対戦中は無くなる。",
+    "aid": "575671"
+  },
+  {
+    "name": "ノーマルジュエル",
+    "id": "i88",
+    "info": "ノーマルタイプの技の威力が1.3倍になる。1度使うとその対戦中は無くなる。",
+    "aid": "575670"
+  },
+  {
+    "name": "グランドコート",
+    "id": "i96",
+    "info": "技と特性でフィールドを張った時継続時間が3ターン長くなる。(合計8ターン)",
+    "aid": "575669"
+  },
+  {
+    "name": "エレキシード",
+    "id": "i98",
+    "info": "エレキフィールド状態の時に防御が1段階上がる。1度使うとその対戦中は無くなる。",
+    "aid": "575668"
+  },
+  {
+    "name": "サイコシード",
+    "id": "i99",
+    "info": "サイコフィールド状態の時に特防が1段階上がる。1度使うとその対戦中は無くなる。",
+    "aid": "575661"
+  },
+  {
+    "name": "ミストシード",
+    "id": "i100",
+    "info": "ミストフィールド状態の時に特防が1段階上がる。1度使うとその対戦中は無くなる。",
+    "aid": "575662"
+  },
+  {
+    "name": "グラスシード",
+    "id": "i101",
+    "info": "グラスフィールド状態の時に防御が1段階上がる。1度使うとその対戦中は無くなる。",
+    "aid": "575663"
   },
   {
     "name": "クラボのみ",
