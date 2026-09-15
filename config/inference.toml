@@ -6,8 +6,8 @@
 # resolution           : モデル入力解像度(幅x高さ)
 
 [resolution]
-width = 1280
-height = 720
+width = 1920
+height = 1080
 
 [ocr]
 interval_secs = 3

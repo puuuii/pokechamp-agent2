@@ -1,15 +1,20 @@
-use std::path::Path;
-use std::sync::Mutex;
-
+// party_matcher.rs
 use image::imageops::FilterType;
 use ndarray::Array4;
 use ort::session::Session;
 use ort::value::Value;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
 use tracing::{info, warn};
 
 use crate::hardware::FrameBuffer;
 use crate::video::{CropArea, PixelCropArea, unpack_rgb};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+static DEBUG_CROP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// 埋め込みモデルの入力画像サイズ(正方形)。使用するONNXモデルに合わせて変更する。
 /// timm/mobilenetv3_small_100.lamb_in1k は 224x224 前提。
@@ -67,75 +72,75 @@ impl Default for PartySlots {
                 CropArea {
                     x: 0.2613,
                     y: 0.1450,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
                     x: 0.2613,
                     y: 0.2625,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
                     x: 0.2613,
                     y: 0.3775,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
                     x: 0.2613,
                     y: 0.4950,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
                     x: 0.2613,
                     y: 0.6125,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
                     x: 0.2613,
                     y: 0.7300,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
             ],
             opponent: [
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.1450,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.2625,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.3775,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.4950,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.6125,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
                 CropArea {
-                    x: 0.8387,
+                    x: 0.8400,
                     y: 0.7300,
-                    width: 0.0500,
+                    width: 0.0775,
                     height: 0.1008,
                 },
             ],
@@ -149,6 +154,51 @@ struct IconTemplate {
     file_name: String,
     /// L2正規化済みの埋め込みベクトル(コサイン類似度=内積で比較できるようにしてある)。
     embedding: Vec<f32>,
+}
+
+/// キャッシュファイル名(img_dir 直下に生成)。
+const CACHE_FILE_NAME: &str = ".embedding_cache.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedEmbedding {
+    file_name: String,
+    mtime_nanos: u128,
+    embedding: Vec<f32>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct EmbeddingCache {
+    model_path: String,
+    entries: Vec<CachedEmbedding>,
+}
+
+impl EmbeddingCache {
+    /// 読み込み失敗、またはモデルが変わっていた場合は空キャッシュ扱い。
+    fn load(path: &Path, model_path: &str) -> Self {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        match serde_json::from_str::<Self>(&contents) {
+            Ok(cache) if cache.model_path == model_path => cache,
+            _ => Self::default(),
+        }
+    }
+
+    fn save(&self, path: &Path) {
+        if let Ok(json) = serde_json::to_string(self) {
+            if let Err(e) = std::fs::write(path, json) {
+                warn!(
+                    "埋め込みキャッシュの書き込みに失敗しました({}): {e}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+fn file_mtime_nanos(path: &Path) -> anyhow::Result<u128> {
+    let modified = std::fs::metadata(path)?.modified()?;
+    Ok(modified.duration_since(UNIX_EPOCH)?.as_nanos())
 }
 
 /// `img/` 配下の全PNGを事前学習済み画像埋め込みモデルでベクトル化しておき、
@@ -175,7 +225,18 @@ impl PartyIconMatcher {
                 )
             })?;
 
+        let model_path_str = model_path.to_string_lossy().to_string();
+        let cache_path = img_dir.join(CACHE_FILE_NAME);
+        let old_cache = EmbeddingCache::load(&cache_path, &model_path_str);
+        let old_by_name: HashMap<&str, &CachedEmbedding> = old_cache
+            .entries
+            .iter()
+            .map(|e| (e.file_name.as_str(), e))
+            .collect();
+
         let mut templates = Vec::new();
+        let mut new_entries = Vec::new();
+        let mut cache_hit = 0usize;
 
         let entries = std::fs::read_dir(img_dir).map_err(|e| {
             anyhow::anyhow!(
@@ -196,6 +257,36 @@ impl PartyIconMatcher {
                 continue;
             }
 
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let mtime_nanos = match file_mtime_nanos(&path) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("mtime取得に失敗しました({}): {e}", path.display());
+                    continue;
+                }
+            };
+
+            // キャッシュにヒットすれば推論をスキップする。
+            if let Some(cached) = old_by_name.get(file_name.as_str()) {
+                if cached.mtime_nanos == mtime_nanos {
+                    templates.push(IconTemplate {
+                        file_name: file_name.clone(),
+                        embedding: cached.embedding.clone(),
+                    });
+                    new_entries.push(CachedEmbedding {
+                        file_name,
+                        mtime_nanos,
+                        embedding: cached.embedding.clone(),
+                    });
+                    cache_hit += 1;
+                    continue;
+                }
+            }
+
             let img = match image::open(&path) {
                 Ok(img) => img,
                 Err(e) => {
@@ -209,12 +300,13 @@ impl PartyIconMatcher {
 
             match embed_rgb_image(&mut session, &rgb_image) {
                 Ok(embedding) => {
-                    let file_name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
                     templates.push(IconTemplate {
+                        file_name: file_name.clone(),
+                        embedding: embedding.clone(),
+                    });
+                    new_entries.push(CachedEmbedding {
                         file_name,
+                        mtime_nanos,
                         embedding,
                     });
                 }
@@ -223,14 +315,21 @@ impl PartyIconMatcher {
         }
 
         info!(
-            "ポケモンアイコンテンプレートを{}件読み込みました",
-            templates.len()
+            "ポケモンアイコンテンプレートを{}件読み込みました(キャッシュヒット{}件)",
+            templates.len(),
+            cache_hit
         );
         anyhow::ensure!(
             !templates.is_empty(),
             "img/ にPNGが見つかりませんでした: {}",
             img_dir.display()
         );
+
+        EmbeddingCache {
+            model_path: model_path_str,
+            entries: new_entries,
+        }
+        .save(&cache_path);
 
         Ok(Self {
             session: Some(Mutex::new(session)),
@@ -260,6 +359,21 @@ impl PartyIconMatcher {
 
         let pixel_crop = crop.to_pixels(frame_width, frame_height);
         let rgb_image = extract_crop_as_rgb_image(frame, frame_width, frame_height, pixel_crop)?;
+
+        #[cfg(debug_assertions)]
+        {
+            let n = DEBUG_CROP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+            let dir = Path::new("debug_crops");
+            if std::fs::create_dir_all(dir).is_ok() {
+                let path = dir.join(format!("crop_{n:05}.png"));
+                if let Err(e) = rgb_image.save(&path) {
+                    warn!(
+                        "デバッグ用クロップ画像の保存に失敗しました({}): {e}",
+                        path.display()
+                    );
+                }
+            }
+        }
 
         let embedding = {
             let mut session = session_mutex.lock().unwrap();
@@ -419,4 +533,3 @@ fn extract_crop_as_rgb_image(
 
     Some(img)
 }
-

@@ -42,8 +42,8 @@ impl HardwareProfile {
         audio_device_keyword: "gc311",
         video_device_keyword: "streamline",
         video: VideoSpec {
-            width: 1280,
-            height: 720,
+            width: 1920,
+            height: 1080,
             fps: 60,
             frame_format: FrameFormat::YUYV,
         },
